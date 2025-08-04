@@ -33,6 +33,12 @@
     - healthcheck
     - uninstall
 
+- name: Display Grafana variables for debugging
+  ansible.builtin.debug:
+    var: monitoring_grafana
+  tags:
+    - debug
+
 - name: Display Grafana facts for debugging
   ansible.builtin.debug:
     msg:

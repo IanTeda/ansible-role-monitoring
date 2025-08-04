@@ -1,0 +1,556 @@
+# ============================================================================
+# Ansible Role: Alloy (Debian)
+# -----------------------------------------------------------------------------
+# Maintains the installation, configuration, healthcheck, and removal of
+# Grafana Alloy (Prometheus agent) on Debian-based systems.
+#
+# Features:
+#   - Idempotent install, config, and uninstall logic for Alloy
+#   - Systemd integration (service management)
+#   - Dedicated system user and group for Alloy
+#   - Secure directory and file permissions
+#   - Automated firewall (UFW) profile deployment
+#   - Healthchecks for service and Web UI endpoints
+#   - Nginx reverse proxy integration
+#   - Robust uninstall and cleanup logic
+#   - Well-documented, production-ready, and maintainable
+#
+# Role Path: roles/monitoring/tasks/alloy-debian.yaml
+# Project: ansible_playbook
+# Maintainer: IanTeda
+# Last updated: 2025-08-05
+#
+# References:
+#   https://grafana.com/docs/alloy/latest/
+# -----------------------------------------------------------------------------
+#
+# Sections:
+#   00. Set Alloy Ansible Facts
+#   01. Shutdown Alloy Services         ['shutdown']
+#   02. Set Up Alloy User               ['user_group']
+#   03. Create Service Directories      ['directories']
+#   04. Download & Install Alloy        ['install']
+#   05. Setup Config Files for Alloy    ['config']
+#   06. Setup Systemd for Alloy         ['systemd']
+#   07. Setup Firewall for Alloy        ['firewall']
+#   08. Setup Nginx Proxy for Alloy     ['nginx']
+#   09. Setup Monitoring of Alloy       ['monitoring']
+#   10. Healthchecks for Alloy          ['healthcheck']
+#   99. Uninstall Alloy                 ['uninstall']
+# -----------------------------------------------------------------------------
+
+---
+# =====================================================================
+# 00. SET ALLOY ANSIBLE FACTS
+# ---------------------------------------------------------------------
+
+- name: Set Alloy directory and file facts
+  ansible.builtin.set_fact:
+    alloy_user: "{{ monitoring_alloy.user }}"
+    alloy_group: "{{ monitoring_group }}"
+    alloy_home_dir: "/opt/{{ monitoring_alloy.user }}"
+    alloy_config_dir: "/etc/{{ monitoring_alloy.user }}"
+    alloy_config_file: "{{ monitoring_alloy.component_file }}"
+    alloy_data_dir: "/data/{{ monitoring_alloy.user }}"
+    alloy_systemd_name: "{{ monitoring_alloy.user }}"
+    alloy_download_url: "https://github.com/grafana/alloy/releases/download/v{{ monitoring_alloy.release }}/alloy-linux-amd64.zip"
+    alloy_binary_path: "/usr/local/bin/alloy"
+  tags: [install, config, user_group, directories, systemd, firewall, nginx, healthcheck, uninstall]
+
+- name: Display Alloy variables for debugging
+  ansible.builtin.debug:
+    var: monitoring_alloy
+  tags: [debug]
+
+- name: Display Alloy facts for debugging
+  ansible.builtin.debug:
+    msg:
+      - "Fact -> alloy_user: {{ alloy_user }}"
+      - "Fact -> alloy_group: {{ alloy_group }}"
+      - "Fact -> alloy_home_dir: {{ alloy_home_dir }}"
+      - "Fact -> alloy_config_dir: {{ alloy_config_dir }}"
+      - "Fact -> alloy_config_file: {{ alloy_config_file }}"
+      - "Fact -> alloy_data_dir: {{ alloy_data_dir }}"
+      - "Fact -> alloy_systemd_name: {{ alloy_systemd_name }}"
+      - "Fact -> alloy_download_url: {{ alloy_download_url }}"
+      - "Fact -> alloy_binary_path: {{ alloy_binary_path }}"
+      - "Var  -> alloy.release: {{ alloy.release }}"
+  tags: [debug]
+
+
+
+# =====================================================================
+# 01. SHUTDOWN ALLOY SERVICES
+# This section ensures Alloy services are stopped before making changes
+# to prevent conflicts during installation or configuration.
+# ---------------------------------------------------------------------
+
+- name: Check if Alloy systemd service exists
+  ansible.builtin.stat:
+    path: "/lib/systemd/system/{{ alloy_systemd_name }}.service"
+  register: alloy_service_file
+  tags: [install, config, shutdown]
+
+- name: Ensure Alloy service is stopped before modifying
+  ansible.builtin.systemd:
+    name: "{{ alloy_systemd_name }}"
+    state: stopped
+  become: true
+  failed_when: false
+  when: alloy_service_file.stat.exists
+  tags: [install, config, shutdown]
+
+
+
+# =============================================================================
+# 02. SET UP ALLOY USER & CREATE SERVICE DIRECTORIES
+# This section creates the necessary user and directories for Alloy
+# to run securely and with the correct permissions.
+# -----------------------------------------------------------------------------
+
+- name: Create Alloy group "{{ alloy_group }}" exists
+  ansible.builtin.group:
+    name: "{{ alloy_group }}"
+    state: present
+  become: true
+  tags: [install, user_group]
+
+- name: Create Alloy system user "{{ alloy_user }}" exists and is in required groups
+  ansible.builtin.user:
+    state: present
+    name: "{{ alloy_user }}"
+    group: "{{ alloy_group }}"
+    groups:
+      - "{{ alloy_group }}"
+      - systemd-journal           # Provide access to journald for logging
+      - adm                       # Old journal group, just to be sure
+    append: true
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: no
+    comment: "Grafana Alloy Service System Account"
+  become: true
+  tags: [install, user_group]
+
+- name: Assert Alloy user and group are created
+  ansible.builtin.assert:
+    that:
+      - "'{{ alloy_group }}' in lookup('ansible.builtin.pipe', 'getent group')"
+      - "'{{ alloy_user }}' in lookup('ansible.builtin.pipe', 'getent passwd')"
+    fail_msg: "Alloy user or group does not exist!"
+    success_msg: "Alloy user and group exist."
+  tags: [install, user_group, verify]
+
+
+
+# =============================================================================
+# 03. CREATE REQUIRED ALLOY DIRECTORIES
+# This section creates the required directories
+# -----------------------------------------------------------------------------
+
+- name: Create directories for Alloy service
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ alloy_user }}"
+    group: "{{ alloy_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ alloy_config_dir }}", mode: "0750" }
+    - { path: "{{ alloy_data_dir }}",   mode: "0750" }
+  become: true
+  tags: [install, config, directories]
+
+- name: Assert Alloy config and data directories are created
+  ansible.builtin.assert:
+    that:
+      - ansible.builtin.stat(path="{{ alloy_config_dir }}").stat.exists
+      - ansible.builtin.stat(path="{{ alloy_data_dir }}").stat.exists
+    fail_msg: "Alloy config or data directory does not exist!"
+    success_msg: "Alloy config and data directories exist."
+  tags: [install, config, directories, verify]
+
+
+# =============================================================================
+# 04. DOWNLOAD & INSTALL ALLOY
+# This section handles the download and installation of the Alloy binary.
+# -----------------------------------------------------------------------------
+
+- name: Install unzip dependency for Alloy
+  ansible.builtin.apt:
+    name: unzip
+    state: present
+    update_cache: yes
+  become: true
+  tags: [install]
+
+- name: Download Alloy release
+  ansible.builtin.get_url:
+    url: "{{ alloy_download_url }}"
+    dest: "/tmp/alloy.zip"
+    mode: '0644'
+    timeout: 30
+  become: true
+  retries: 3
+  delay: 5
+  register: alloy_download_result
+  until: alloy_download_result is succeeded
+  tags: [install]
+
+- name: Unzip Alloy binary
+  ansible.builtin.unarchive:
+    src: "/tmp/alloy.zip"
+    dest: "/tmp/"
+    remote_src: yes
+    creates: "/tmp/alloy"
+  become: true
+  tags: [install]
+
+- name: Install Alloy binary
+  ansible.builtin.copy:
+    src: "/tmp/alloy-linux-amd64"
+    dest: "{{ alloy_binary_path }}"
+    owner: root
+    group: root
+    mode: '0755'
+    remote_src: yes
+  become: true
+  tags: [install]
+
+- name: Verify Alloy binary version
+  ansible.builtin.command: "{{ alloy_binary_path }} --version"
+  register: alloy_version_check
+  changed_when: false
+  tags: [install, verify]
+
+- name: Assert correct Alloy version is installed
+  ansible.builtin.assert:
+    that:
+      - "monitoring_alloy.release in alloy_version_check.stdout"
+    fail_msg: "Alloy version check failed. Expected {{ monitoring_alloy.release }}, got {{ alloy_version_check.stdout }}."
+    success_msg: "Expected Alloy binary v{{ monitoring_alloy.release }} installed successfully."
+  tags: [install, verify]
+
+- name: Clean up downloaded Alloy archive and artifacts
+  ansible.builtin.file:
+    path: "/tmp/alloy-linux-amd64.zip"
+    state: absent
+  become: true
+  loop:
+    - "/tmp/alloy.zip"
+    - "/tmp/alloy-linux-amd64"
+  when: alloy_download_result is succeeded
+  failed_when: alloy_download_result is failed
+  changed_when: false
+  tags: [install, cleanup]
+
+
+
+# =====================================================================
+# 04. SETUP CONFIG FILES FOR ALLOY
+# This section deploys the Alloy configuration file and validates it
+# to ensure the service starts with the correct settings.
+# ---------------------------------------------------------------------
+
+- name: Deploy Alloy configuration file
+  ansible.builtin.template:
+    src: templates/alloy-config.alloy.j2
+    dest: "{{ alloy_config_file }}"
+    owner: "{{ alloy_user }}"
+    group: "{{ alloy_group }}"
+    mode: '0640'
+  become: true
+  tags: [install, config]
+
+- name: Verify Alloy configuration file is valid
+  ansible.builtin.command: "{{ alloy_binary_path }} validate {{ alloy_config_file }}"
+  register: alloy_config_verify
+  changed_when: false
+  failed_when: alloy_config_verify.rc != 0
+  become: true
+  tags: [install, config, verify]
+
+
+
+# =====================================================================
+# 05. SETUP SYSTEMD FOR ALLOY
+# This section deploys the systemd service file for Alloy and manages
+# the service lifecycle.
+# ---------------------------------------------------------------------
+
+- name: Deploy Alloy systemd unit file
+  ansible.builtin.template:
+    src: templates/alloy-systemd.service.j2
+    dest: "/lib/systemd/system/{{ alloy_systemd_name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, systemd]
+
+- name: Verify Alloy systemd service config is valid
+  ansible.builtin.command: "systemd-analyze verify /lib/systemd/system/{{ alloy_systemd_name }}.service"
+  register: alloy_systemd_verify
+  changed_when: false
+  failed_when: alloy_systemd_verify.rc != 0
+  tags: [install, systemd, verify]
+
+- name: Reload systemd and start Alloy service
+  ansible.builtin.systemd_service:
+    daemon_reload: yes
+    name: "{{ alloy_systemd_name }}"
+    enabled: yes
+    state: started
+  become: true
+  tags: [install, systemd]
+
+- name: Verify Alloy service is active
+  ansible.builtin.systemd:
+    name: "{{ alloy_systemd_name }}"
+  register: alloy_service_status
+  changed_when: false
+  tags: [install, systemd, verify, healthcheck]
+
+- name: Assert Alloy service is running
+  ansible.builtin.assert:
+    that:
+      - alloy_service_status.status.ActiveState == "active"
+    fail_msg: "Alloy service is NOT active."
+    success_msg: "Alloy service is active."
+  tags: [install, systemd, verify, healthcheck]
+
+
+
+## 06. SETUP FIREWALL FOR ALLOY
+# This section sets up the firewall rules to allow the service traffic
+# -----------------------------------------------------------------------------
+
+- name: Deploy Alloy UFW application profile
+  ansible.builtin.template:
+    src: templates/alloy-ufw-profile.j2
+    dest: "/etc/ufw/applications.d/{{ alloy_systemd_name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, firewall]
+
+- name: Reload UFW Alloy application profiles
+  ansible.builtin.command: "ufw app update {{ alloy_systemd_name }}"
+  become: true
+  changed_when: false
+  failed_when: false
+  tags: [install, firewall]
+
+- name: Allow Alloy through UFW using application profile
+  ansible.builtin.ufw:
+    rule: allow
+    name: "Alloy HTTP"
+    comment: "Allow Alloy HTTP ({{ monitoring_alloy.http_port }}) from LOCAL NET"
+    src: "{{ item }}"
+  loop: "{{ networking_networks.local }}"
+  become: true
+  tags: [install, firewall]
+
+- name: Confirm Alloy UFW profile is allowed for local networks
+  ansible.builtin.command: "ufw status numbered"
+  register: ufw_status
+  changed_when: false
+  tags: [install, firewall, verify]
+
+- name: Assert Allow UFW rule exists for each local network
+  ansible.builtin.assert:
+    that:
+      - "'Alloy HTTP' in ufw_status.stdout and item in ufw_status.stdout"
+    fail_msg: "Allow Alloy HTTP UFW rule is NOT present for {{ item }}"
+    success_msg: "Allow Alloy HTTP UFW rule is present for {{ item }}"
+  loop: "{{ networking_networks.local }}"
+  tags: [install, config, firewall, verify]
+
+
+
+# =============================================================================
+## 07. SETUP NGINX PROXY FOR ALLOY
+# This section sets up the Nginx proxy location
+# -----------------------------------------------------------------------------
+
+- name: Deploy Alloy Nginx location configuration
+  ansible.builtin.template:
+    src: templates/alloy-nginx-location.conf.j2
+    dest: "/etc/nginx/conf.d/{{ ansible_hostname }}-{{ alloy_systemd_name }}.conf"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, proxy]
+
+- name: Test Nginx configuration
+  ansible.builtin.command: nginx -t
+  register: nginx_test
+  changed_when: false
+  failed_when: nginx_test.rc != 0
+  become: true
+  tags: [install, proxy, verify]
+
+- name: Restart Nginx after location configuration
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: restarted
+  become: true
+  tags: [install, proxy]
+
+
+
+# =============================================================================
+# 07. HEALTH CHECKS FOR ALLOY
+# This section undertakes a number of check to confirm the health of the service
+# -----------------------------------------------------------------------------
+
+- name: Check Alloy HTTP endpoint
+  ansible.builtin.uri:
+    url: "http://{{ monitoring_alloy.listen_address }}:{{ monitoring_alloy.http_port }}/{{ monitoring_alloy.path_prefix }}/"
+    status_code: 200
+    return_content: no
+  register: alloy_metrics_health
+  failed_when: alloy_metrics_health.status != 200
+  tags: [install, verify, healthcheck]
+
+- name: Assert Alloy Web UI endpoint is healthy
+  ansible.builtin.assert:
+    that:
+      - alloy_metrics_health.status == 200
+    fail_msg: "Alloy HTTP endpoint is NOT healthy."
+    success_msg: "Alloy HTTP endpoint is healthy."
+  tags: [install, verify, healthcheck]
+
+
+
+# =============================================================================
+## 99. UNINSTALLATION
+# This section handles the uninstallation of Alloy and cleanup tasks
+# -----------------------------------------------------------------------------
+
+- name: Confirm Alloy uninstallation
+  ansible.builtin.pause:
+    prompt: |
+      ⚠️  WARNING: Alloy Uninstallation Confirmation REQUIRED ⚠️
+
+      You are about to completely uninstall the Alloy service from this system.
+
+      This will remove:
+      🗑️  Service binary: /usr/local/bin/alloy
+      🗑️  Systemd service: {{ alloy_systemd_name }}.service
+      🗑️  Configuration files: {{ alloy_config_dir }}/
+      🗑️  User account: {{ alloy_user }}
+      🗑️  UFW firewall rules: alloy profile
+      🗑️  Prometheus scraper config: /etc/prometheus/conf.d/{{ alloy_systemd_name }}.yml
+
+      ❗ This action will stop metrics collection from your alloy instance!
+      📊 Historical metrics data in Prometheus will be preserved
+      
+      Are you sure you want to proceed with the uninstallation? (yes/no)
+  register: uninstall_confirmation
+  tags: [never, uninstall]
+
+- name: Abort Alloy uninstallation
+  ansible.builtin.fail:
+    msg: |
+      🛑 Uninstallation aborted by user choice
+
+      The Alloy service remains installed and operational.
+      No changes have been made to the system.
+  when: not (uninstall_confirmation.user_input | bool)
+  tags: [never, uninstall]
+
+- name: Stop and disable Alloy service for uninstallation
+  when: uninstall_confirmation.user_input | bool and alloy_service_file.stat.exists
+  ansible.builtin.systemd:
+    name: "{{ alloy_systemd_name }}"
+    state: stopped
+    enabled: no
+  become: true
+  failed_when: false
+  tags: [never, uninstall]
+
+- name: Remove Alloy user "{{ alloy_user }}" on uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.user:
+    name: "{{ alloy_user }}"
+    state: absent
+    remove: yes
+    force: yes
+  become: true
+  failed_when: false
+  tags: [uninstall, never]
+
+- name: Remove Alloy service directories during uninstal
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop:
+    - { path: "{{ alloy_config_dir }}" }
+    - { path: "{{ alloy_data_dir }}" }
+  become: true
+  tags: [uninstall, never]
+
+- name: Remove Alloy binary on uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ alloy_binary_path }}"
+    state: absent
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove Alloy configuration file
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ alloy_config_file }}"
+    state: absent
+  become: true
+  tags: [uninstall, never]
+
+- name: Delete systemd service for Alloy
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "/lib/systemd/system/{{ alloy_systemd_name }}.service"
+    state: absent
+  become: true
+  tags: [never, uninstall]
+
+- name: Reload systemd after removing Alloy service
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.systemd_service:
+    daemon_reload: yes
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove UFW rules for Alloy application profile
+  ansible.builtin.ufw:
+    rule: deny
+    name: "Alloy Web UI"
+    delete: yes
+  become: true
+  failed_when: false
+  tags: [uninstall, never]
+
+- name: Remove Alloy UFW application profile
+  ansible.builtin.file:
+    path: "/etc/ufw/applications.d/{{ alloy_systemd_name }}"
+    state: absent
+  become: true
+  tags: [uninstall, never]
+
+- name: Delete Nginx location config for Alloy
+  ansible.builtin.file:
+    path: "/etc/nginx/conf.d/{{ ansible_hostname }}-{{ alloy_systemd_name }}.conf"
+    state: absent
+  become: true
+  tags: [never, uninstall]
+
+- name: Restart Nginx after location configuration deleted
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: restarted
+  become: true
+  tags: [never, uninstall]

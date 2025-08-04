@@ -222,7 +222,7 @@
     grafana_password: "{{ monitoring_grafana.admin.password }}"
     ds_type: prometheus
     access: proxy
-    ds_url: "http://{{ monitoring_prometheus.listen_address }}:{{ monitoring_prometheus.port }}"
+    ds_url: "http://{{ monitoring_prometheus.listen_address }}:{{ monitoring_prometheus.port }}/{{ monitoring_prometheus.path_prefix }}"
     is_default: false
     state: present
     validate_certs: false

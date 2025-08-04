@@ -1,0 +1,20 @@
+# ============================================================================
+# Alloy UFW Application Profile
+# ============================================================================
+# ⚠️ WARNING: This file is managed by Ansible - DO NOT EDIT MANUALLY! ⚠️
+# Any manual changes will be overwritten on the next Ansible run.
+# Edit the template file or Ansible variables instead.
+#
+# Generated from: roles/monitoring/templates/loki-ufw-profile.j2
+# Last updated: {{ ansible_date_time.iso8601 }}
+# ============================================================================
+
+[Alloy HTTP]
+title=Grafana Alloy Collector
+description=Metrics, logs, and traces collector (HTTP API and gRPC)
+ports={{ monitoring_alloy.http_port }}/tcp
+
+[Alloy GRPC]
+title=Grafana Alloy Collector
+description=Metrics, logs, and traces collector (HTTP API and gRPC)
+ports={{ monitoring_alloy.grpc_port }}/tcp

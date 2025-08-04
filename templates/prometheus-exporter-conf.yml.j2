@@ -1,0 +1,27 @@
+# ==============================================================================
+# WARNING: THIS FILE IS MANAGED BY ANSIBLE
+#
+# Any manual changes will be overwritten on the next playbook run.
+# Please edit the template file in the Ansible role instead.
+# Source: roles/debian/templates/prometheus-conf.d-prometheus.yml.j2
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Prometheus Scrape Configuration for Prometheus
+# ------------------------------------------------------------------------------
+#
+# This configuration defines the scrape job for the Prometheus server itself.
+#
+# This file is intended to be included in the main prometheus.yml via the
+# 'scrape_config_files' directive.
+#
+# Last updated: {{ ansible_date_time.date }}
+# ------------------------------------------------------------------------------
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['127.0.0.1:{{ monitoring_prometheus.port }}']
+        labels:
+          instance: '{{ ansible_fqdn }}'
+    metrics_path: '/{{ monitoring_prometheus.path_prefix }}/metrics'

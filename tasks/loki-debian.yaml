@@ -41,18 +41,18 @@
 
 - name: Set loki directory and file facts
   ansible.builtin.set_fact:
-    loki_user: "{{ monitoring_loki.user }}"
-    loki_group: "{{ monitoring_loki.group }}"
+    loki_binary_path: "/usr/local/bin/loki"
     loki_config_dir: "/etc/{{ monitoring_loki.user }}"
     loki_config_file: "/etc/{{ monitoring_loki.user }}/loki.yaml"
     loki_data_dir: "/data/{{ monitoring_loki.user }}"
-    loki_systemd_name: "{{ monitoring_loki.user }}"
     loki_download_url: "https://github.com/grafana/loki/releases/download/v{{ monitoring_loki.release }}/loki-linux-amd64.zip"
-    loki_binary: "/usr/local/bin/loki"
-    loki_http_port: "{{ monitoring_loki.http_port }}"
+    loki_group: "{{ monitoring_loki.group }}"
     loki_grpc_port: "{{ monitoring_loki.grpc_port }}"
+    loki_http_port: "{{ monitoring_loki.http_port }}"
     loki_listen_address: "{{ monitoring_loki.listen_address }}"
     loki_log_level: "{{ monitoring_loki.log_level }}"
+    loki_systemd_name: "{{ monitoring_loki.user }}"
+    loki_user: "{{ monitoring_loki.user }}"
   tags:
     - install
     - config
@@ -60,7 +60,29 @@
     - healthcheck
     - uninstall
 
+- name: Display Loki variables for debugging
+  ansible.builtin.debug:
+    var: monitoring_loki
+  tags:
+    - debug
 
+- name: Display Loki facts for debugging
+  ansible.builtin.debug:
+    msg:
+      - "Fact -> loki_binary_path: {{ loki_binary_path }}"
+      - "Fact -> loki_config_dir: {{ loki_config_dir }}"
+      - "Fact -> loki_config_file: {{ loki_config_file }}"
+      - "Fact -> loki_data_dir: {{ loki_data_dir }}"
+      - "Fact -> loki_download_url: {{ loki_download_url }}"
+      - "Fact -> loki_group: {{ loki_group }}"
+      - "Fact -> loki_grpc_port: {{ loki_grpc_port }}"
+      - "Fact -> loki_http_port: {{ loki_http_port }}"
+      - "Fact -> loki_listen_address: {{ loki_listen_address }}"
+      - "Fact -> loki_log_level: {{ loki_log_level }}"
+      - "Fact -> loki_systemd_name: {{ loki_systemd_name }}"
+      - "Fact -> loki_user: {{ loki_user }}"
+  tags:
+    - debug
 
 # 01. SHUTDOWN LOKI SERVICES
 # -------------------------------------------------------------------------------

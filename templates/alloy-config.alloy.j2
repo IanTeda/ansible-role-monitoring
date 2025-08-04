@@ -1,0 +1,132 @@
+// Alloy Configuration
+// Managed by Ansible - DO NOT EDIT MANUALLY!
+// Reference: https://grafana.com/docs/alloy/latest/get-started/configuration-syntax/
+// Generated from: roles/monitoring/templates/alloy-config.alloy.j2
+// Deployed to: {{ alloy_config_file }}
+// Last updated: {{ ansible_date_time.iso8601 }}
+
+// Loki log levels include [error, warn, info, debug, trace]
+logging {
+  level = "{{ monitoring_alloy.log_level }}"
+}
+
+// 1. Define Loki relabeling rules for Systemd Journal fields
+loki.relabel "systemd_journal" {
+  // This relabel component doesn't forward directly, but its rules are used by others.
+  forward_to = []
+
+  // Rename __journal__systemd_unit to 'unit'
+  // This is useful for grouping logs by systemd service unit
+  // and helps in filtering logs from specific services.
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label = "unit"
+  }
+
+  // Rename __journal__systemd_service_name to 'service'
+  // This is useful for identifying the service name in logs
+  // and helps in filtering logs from specific services.
+  rule {
+    source_labels = ["__journal__systemd_service_name"]
+    target_label  = "service"
+  }
+
+  // Rename __journal__priority to 'level'
+  // This is useful for converting systemd journal priority levels to Loki log levels
+  // and helps in filtering logs based on severity.
+  rule {
+    source_labels = ["__journal__priority"]
+    target_label  = "level"
+  }
+
+  // Rename __journal__syslog_identifier to 'syslog_identifier'
+  // This is useful for identifying the source of logs in Loki
+  rule {
+    source_labels = ["__journal__syslog_identifier"]
+    target_label = "syslog_identifier"
+  }
+
+  // Use hostname as 'instance' label
+  // This is useful for identifying the host from which the logs originate
+  // and helps in filtering logs from specific hosts.
+  rule {
+    source_labels = ["__journal__hostname"]
+    target_label = "instance" 
+  }
+}
+
+// Read Alloy logs, add relabels and forward to loki endpoint
+// For maintainability add a seperate loki.source.journal component for each
+// service to be sent to Loki
+loki.source.journal "read_alloy_logs" {
+  // Include logs from Alloy systemd service unit
+  matches = "_SYSTEMD_UNIT=alloy.service"
+
+  // Apply "systemd_journal" relabeling rules defined above
+  relabel_rules = loki.relabel.systemd_journal.rules 
+
+  // Forward logs to the "endpoint" Loki writer below
+  forward_to = [loki.write.endpoint.receiver]
+}
+
+// Read Node Exporter logs, and relabels and forward to loki endpoint
+loki.source.journal "read_node_exporter_logs" {
+  // Include logs from Node Exporter systemd service unit
+  matches = "_SYSTEMD_UNIT=node-exporter.service"
+
+  // Apply "systemd_journal" relabeling rules defined above
+  relabel_rules = loki.relabel.systemd_journal.rules 
+
+  // Forward logs to the "endpoint" Loki writer below
+  forward_to = [loki.write.endpoint.receiver]
+}
+
+// Read Loki logs, and relabels and forward to loki endpoint
+loki.source.journal "read_loki_logs" {
+  // Include logs from Loki systemd service unit
+  matches = "_SYSTEMD_UNIT=loki.service"
+
+  // Apply "systemd_journal" relabeling rules defined above
+  relabel_rules = loki.relabel.systemd_journal.rules 
+
+  // Forward logs to the "endpoint" Loki writer below
+  forward_to = [loki.write.endpoint.receiver]
+}
+
+// Read Prometheus logs, and relabels and forward to loki endpoint
+loki.source.journal "read_prometheus_logs" {
+  // Include logs from Prometheus systemd service unit
+  matches = "_SYSTEMD_UNIT=prometheus.service"
+
+  // Apply "systemd_journal" relabeling rules defined above
+  relabel_rules = loki.relabel.systemd_journal.rules 
+
+  // Forward logs to the "endpoint" Loki writer below
+  forward_to = [loki.write.endpoint.receiver]
+}
+
+// Read Grafana logs, and relabels and forward to loki endpoint
+loki.source.journal "read_grafana_logs" {
+  // Include logs from Grafana systemd service unit
+  matches = "_SYSTEMD_UNIT=grafana.service"
+
+  // Apply "systemd_journal" relabeling rules defined above
+  relabel_rules = loki.relabel.systemd_journal.rules 
+
+  // Forward logs to the "endpoint" Loki writer below
+  forward_to = [loki.write.endpoint.receiver]
+}
+
+//////////////////////////// ADD BELOW THE LINE ///////////////////////////////
+
+
+
+
+//////////////////////////// ADD ABOVE THE LINE ///////////////////////////////
+
+// 3. Write logs to Loki
+loki.write "endpoint" {
+  endpoint {
+    url ="http://{{ monitoring_loki.listen_address }}:{{ monitoring_loki.http_port }}/loki/api/v1/push"
+  }
+}
