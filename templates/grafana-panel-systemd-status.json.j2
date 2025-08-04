@@ -1,0 +1,37 @@
+{
+  "type": "stat",
+  "title": "Alloy Service Status",
+  "datasource": "Prometheus",
+  "description": "Shows the current state of the Alloy systemd service (0=inactive, 1=activating, 2=active).",
+  "fieldConfig": {
+    "defaults": {
+      "color": {
+        "mode": "thresholds"
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "value": null, "color": "red" },
+          { "value": 1, "color": "orange" },
+          { "value": 2, "color": "green" }
+        ]
+      },
+      "mappings": [
+        { "type": "value", "options": { "0": "Inactive", "1": "Activating", "2": "Active" } }
+      ]
+    }
+  },
+  "targets": [
+    {
+      "expr": "node_systemd_unit_state{name=\"alloy.service\"}",
+      "refId": "A"
+    }
+  ],
+  "options": {
+    "reduceOptions": {
+      "calcs": ["lastNotNull"]
+    },
+    "orientation": "horizontal",
+    "textMode": "value"
+  }
+}

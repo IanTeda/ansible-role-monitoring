@@ -1,0 +1,690 @@
+---
+# ============================================================================
+# GRAFANA INSTALLATION, CONFIGURATION, SYSTEMD, AND UNINSTALLATION (DEBIAN)
+# ============================================================================
+# This Ansible task file manages the full lifecycle of Grafana on Debian systems.
+# It follows the structure and conventions of 00-service-template.yaml.
+#
+# Features:
+#   - Idempotent install, config, verify, systemd, and uninstall
+#   - Hardened systemd unit
+#   - User/group management
+#   - Prometheus/Nginx/UFW integration hooks
+#   - Health checks and debug output
+# ============================================================================
+
+## 00. SET GRAFANA ANSIBLE FACTS
+# -----------------------------------------------------------------------------
+- name: Set Grafana directory and file facts
+  ansible.builtin.set_fact:
+    grafana_user: "{{ monitoring_grafana.user }}"
+    grafana_group: "{{ monitoring_grafana.group }}"
+    grafana_config_dir: "/etc/{{ monitoring_grafana.user }}"
+    grafana_config_file: "/etc/{{ monitoring_grafana.user }}/grafana.ini"
+    grafana_data_dir: "/data/{{ monitoring_grafana.user }}"
+    grafana_home_dir: "/opt/{{ monitoring_grafana.user }}"
+    grafana_systemd_name: "{{ monitoring_grafana.user }}"
+    grafana_download_url: "https://dl.grafana.com/oss/release/grafana-{{ monitoring_grafana.version }}.linux-amd64.tar.gz"
+    grafana_binary_path: "/usr/local/bin/grafana"
+    grafana_scrape_config_path: "/etc/prometheus/conf.d/grafana.yml"
+  tags:
+    - install
+    - config
+    - healthcheck
+    - uninstall
+
+- name: Display Grafana facts for debugging
+  ansible.builtin.debug:
+    msg:
+      - "Fact -> grafana_user: {{ grafana_user }}"
+      - "Fact -> grafana_group: {{ grafana_group }}"
+      - "Fact -> grafana_home_dir: {{ grafana_home_dir }}"
+      - "Fact -> grafana_config_dir: {{ grafana_config_dir }}"
+      - "Fact -> grafana_config_file: {{ grafana_config_file }}"
+      - "Fact -> grafana_data_dir: {{ grafana_data_dir }}"
+      - "Fact -> grafana_systemd_name: {{ grafana_systemd_name }}"
+      - "Fact -> grafana_download_url: {{ grafana_download_url }}"
+      - "Fact -> grafana_binary_path: {{ grafana_binary_path }}"
+      - "Fact -> grafana_scrape_config_path: {{ grafana_scrape_config_path }}"
+      - "Var  -> grafana.version: {{ monitoring_grafana.version | default('11.0.0') }}"
+  tags:
+    - debug
+
+- name: Confirm Grafana uninstallation
+  ansible.builtin.pause:
+    prompt: |
+      ⚠️  WARNING: Grafana Uninstallation Confirmation ⚠️
+      You are about to completely uninstall Grafana from this system.
+      This will remove:
+      🗑️  Service binary: /usr/sbin/grafana-server
+      🗑️  Systemd service: grafana.service
+      🗑️  Configuration files: /etc/grafana/
+      🗑️  User account: grafana
+      🗑️  UFW firewall rules: grafana profile
+      🗑️  Prometheus scraper config: /etc/prometheus/conf.d/grafana.yml
+      ❗ This action will stop metrics collection from your Grafana instance!
+      📊 Historical metrics data in Prometheus will be preserved
+      Are you sure you want to proceed with the uninstallation? (yes/no)
+  register: uninstall_confirmation
+  tags:
+    - never
+    - uninstall
+
+- name: Abort uninstallation - user chose not to proceed
+  ansible.builtin.fail:
+    msg: |
+      🛑 Uninstallation aborted by user choice
+      The Grafana service remains installed and operational.
+      No changes have been made to the system.
+  when: not (uninstall_confirmation.user_input | bool)
+  tags:
+    - never
+    - uninstall
+
+## 01. SHUTDOWN GRAFANA SERVICES
+# -----------------------------------------------------------------------------
+- name: Check if Grafana service exists
+  ansible.builtin.stat:
+    path: "/lib/systemd/system/{{ grafana_systemd_name }}.service"
+  register: service_file
+  tags:
+    - install
+    - config
+
+- name: Ensure Grafana service is stopped before modifying
+  ansible.builtin.systemd:
+    name: "{{ grafana_systemd_name }}"
+    state: stopped
+  become: true
+  failed_when: false
+  when: service_file.stat.exists
+  tags:
+    - install
+    - config
+
+- name: Stop and disable Grafana service for uninstallation
+  ansible.builtin.systemd:
+    name: "{{ grafana_systemd_name }}"
+    state: stopped
+    enabled: no
+  become: true
+  failed_when: false
+  tags:
+    - uninstall
+    - never
+
+## 02. SET UP GRAFANA USER & CREATE SERVICE DIRECTORIES
+# -----------------------------------------------------------------------------
+- name: Ensure grafana group exists
+  ansible.builtin.group:
+    name: "{{ grafana_group }}"
+    state: present
+  become: true
+  tags:
+    - install
+
+- name: Create Grafana system user
+  ansible.builtin.user:
+    name: "{{ grafana_user }}"
+    group: "{{ grafana_group }}"
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: true
+    home: "{{ grafana_home_dir }}"
+    comment: "Grafana Service System Account"
+  become: true
+  tags:
+    - install
+
+- name: Remove Grafana user
+  ansible.builtin.user:
+    name: "{{ grafana_user }}"
+    state: absent
+    remove: yes
+    force: yes
+  become: true
+  failed_when: false
+  tags:
+    - uninstall
+    - never
+
+- name: Create directories for Grafana service
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ grafana_user }}"
+    group: "{{ grafana_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ grafana_config_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.plugin_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ grafana_data_dir }}", mode: "u=rwx,g=r,o="}
+    - { path: "{{ monitoring_grafana.provisioning_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.datasource_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.dashboard_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.alerting_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.playlist_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.folders_dir }}", mode: "u=rwx,g=rw,o="}
+  become: true
+  tags:
+    - install
+
+- name: Remove directories for Grafana service on uninstall
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop:
+    - { path: "{{ grafana_config_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.plugin_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ grafana_data_dir }}", mode: "u=rwx,g=r,o="}
+    - { path: "{{ monitoring_grafana.provisioning_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.datasource_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.dashboard_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.alerting_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.playlist_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.folders_dir }}", mode: "u=rwx,g=rw,o="}
+  become: true
+  tags:
+    - never
+    - uninstall
+
+## 03. INSTALL & VERIFY GRAFANA
+# -----------------------------------------------------------------------------
+- name: Download Grafana release
+  ansible.builtin.get_url:
+    url: "{{ grafana_download_url }}"
+    dest: "/tmp/grafana.tar.gz"
+    mode: '0644'
+    timeout: 60
+  become: true
+  retries: 3
+  delay: 5
+  register: download_result
+  until: download_result is succeeded
+  tags:
+    - install
+
+- name: Extract Grafana archive
+  ansible.builtin.unarchive:
+    src: "/tmp/grafana.tar.gz"
+    dest: "{{ grafana_home_dir }}"
+    remote_src: yes
+    extra_opts: ["--strip-components=1"]
+  become: true
+  tags:
+    - install
+
+- name: Install Grafana binaries
+  ansible.builtin.copy:
+    src: "{{ grafana_home_dir }}/bin/grafana"
+    dest: "{{ grafana_binary_path }}"
+    owner: root
+    group: root
+    mode: '0755'
+    remote_src: yes
+  become: true
+  tags:
+    - install
+
+- name: Ensure correct ownership and permissions of Grafana home directory
+  ansible.builtin.file:
+    path: "{{ grafana_home_dir }}"
+    owner: "{{ grafana_user }}"
+    group: "{{ grafana_group }}"
+    recurse: yes
+    mode: 'u=rwX,g=rX,o='
+  become: true
+  tags:
+    - install
+
+- name: Clean up downloaded archives and temp directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/tmp/grafana.tar.gz"
+  become: true
+  tags:
+    - install
+    - cleanup
+
+- name: Verify grafana binary version
+  ansible.builtin.command: "{{ grafana_binary_path }} -v"
+  register: grafana_version_check
+  changed_when: false
+  tags:
+    - install
+    - verify
+
+- name: Assert correct Grafana version is installed
+  ansible.builtin.assert:
+    that:
+      - "(monitoring_grafana.version | default('11.0.0')) in grafana_version_check.stdout"
+    fail_msg: "Grafana version check failed. Expected {{ monitoring_grafana.version | default('11.0.0') }}. Found: {{ grafana_version_check.stdout }}"
+    success_msg: "Grafana v{{ monitoring_grafana.version | default('11.0.0') }} binary installed successfully."
+  tags:
+    - install
+    - verify
+
+- name: Remove Grafana binaries on uninstall
+  ansible.builtin.file:
+    path: "{{ grafana_binary_path }}"
+    state: absent
+  become: true
+  tags:
+    - never
+    - uninstall
+
+
+## 05 SETUP POSTGRES GRAFANA
+# This section adds the grafana user and database to Postgres
+# ------------------------------------------------------------------------------
+
+- name: Ensure PostgreSQL Python dependencies are installed
+  ansible.builtin.apt:
+    name: python3-psycopg2
+    state: present
+  become: true
+  tags: 
+    - install
+    - config
+
+- name: Make sure the Grafana PostgreSQL database exists
+  community.postgresql.postgresql_db:
+    name: "{{ monitoring_grafana.postgres.database }}"
+    encoding: UTF8
+    lc_collate: en_AU.UTF-8
+    lc_ctype: en_AU.UTF-8
+    state: present
+    login_host: "{{ databases_postgres.listen_address }}"
+    login_port: "{{ databases_postgres.port }}"
+    login_user: "{{ databases_admin.user }}"
+    login_password: "{{ databases_admin.password }}"
+  become: true
+  tags: 
+    - install
+    - config
+
+- name: Ensure Grafana PostgreSQL user exists
+  community.postgresql.postgresql_user:
+    name: "{{ monitoring_grafana.postgres.user }}"
+    password: "{{ monitoring_grafana.postgres.password }}"
+    state: present
+    login_host: "{{ databases_postgres.listen_address }}"
+    login_port: "{{ databases_postgres.port }}"
+    login_user: "{{ databases_admin.user }}"
+    login_password: "{{ databases_admin.password }}"
+    login_db: "postgres" 
+  become: true
+  tags: 
+    - install
+    - config
+
+- name: Grant all privileges on Grafana database to grafana user
+  community.postgresql.postgresql_privs:
+    db: "{{ monitoring_grafana.postgres.database }}"
+    roles: "{{ monitoring_grafana.postgres.user }}"
+    type: database
+    privs: ALL
+    state: present
+    login_host: "{{ databases_postgres.listen_address }}"
+    login_port: "{{ databases_postgres.port }}"
+    login_user: "{{ databases_admin.user }}"
+    login_password: "{{ databases_admin.password }}"
+  become: true
+  tags: 
+    - install
+    - config
+
+- name: Drop Grafana PostgreSQL database on uninstall
+  community.postgresql.postgresql_db:
+    name: "{{ monitoring_grafana.postgres.database }}"
+    state: absent
+    login_host: "{{ databases_postgres.listen_address }}"
+    login_port: "{{ databases_postgres.port }}"
+    login_user: "{{ databases_admin.user }}"
+    login_password: "{{ databases_admin.password }}"
+  become: true
+  tags:
+    - uninstall
+    - never
+
+# - name: Drop Grafana PostgreSQL user on uninstall
+#   community.postgresql.postgresql_user:
+#     name: "{{ monitoring_grafana.postgres.user }}"
+#     state: absent
+    # login_host: "{{ databases_postgres.listen_address }}"
+    # login_port: "{{ databases_postgres.port }}"
+#     login_user: "{{ databases_admin.user }}"
+#     login_password: "{{ databases_admin.password }}"
+#     login_db: "postgres"
+#   become: true
+#   tags:
+#     - uninstall
+#     - never
+
+
+
+## 04. SETUP CONFIG FILES FOR GRAFANA
+# This section sets up the configuration files file for the service
+# -----------------------------------------------------------------------------
+
+- name: Deploy Grafana configuration file
+  ansible.builtin.template:
+    src: templates/grafana-config.ini.j2
+    dest: "{{ grafana_config_file }}"
+    owner: "{{ grafana_user }}"
+    group: "{{ grafana_group }}"
+    mode: '0640'
+  become: true
+  tags:
+    - install
+    - config
+
+# - name: Verify Grafana configuration file is valid
+#   ansible.builtin.command: "{{ grafana_binary_path }} server --config={{ grafana_config_file }} --homepath={{ grafana_home_dir }}"
+#   register: config_verify
+#   changed_when: false
+#   failed_when: config_verify.rc != 0
+#   become: true
+#   become_user: "{{ grafana_user }}"
+#   tags:
+#     - install
+#     - config
+#     - verify
+
+- name: Remove Grafana config on uninstall
+  ansible.builtin.file:
+    path: "{{ grafana_config_file }}"
+    state: absent
+  become: true
+  tags:
+    - never
+    - uninstall
+
+
+
+## 05. SETUP SYSTEMD FOR GRAFANA
+# This section sets up the systemd unit file for the service
+# -----------------------------------------------------------------------------
+
+- name: Deploy Grafana systemd unit file
+  ansible.builtin.template:
+    src: templates/grafana-systemd.service.j2
+    dest: "/lib/systemd/system/{{ grafana_systemd_name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Verify Grafana systemd service config is valid
+  ansible.builtin.command: "systemd-analyze verify /lib/systemd/system/{{ grafana_systemd_name }}.service"
+  register: systemd_verify
+  changed_when: false
+  failed_when: systemd_verify.rc != 0
+  tags:
+    - install
+    - config
+    - verify
+
+- name: Reload systemd and start Grafana service
+  ansible.builtin.systemd_service:
+    daemon_reload: yes
+    name: "{{ grafana_systemd_name }}"
+    enabled: yes
+    state: started
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Verify Grafana service is active
+  ansible.builtin.systemd:
+    name: "{{ grafana_systemd_name }}"
+  register: grafana_service_status
+  changed_when: false
+  tags:
+    - install 
+    - config
+    - verify
+    - healthcheck
+
+- name: Assert Grafana service is running
+  ansible.builtin.assert:
+    that:
+      - grafana_service_status.status.ActiveState == "active"
+    fail_msg: "Grafana service is NOT active."
+    success_msg: "Grafana service is active."
+  tags:
+    - install 
+    - config
+    - verify
+    - healthcheck
+
+- name: Delete systemd service for Grafana
+  ansible.builtin.file:
+    path: "/lib/systemd/system/{{ grafana_systemd_name }}.service"
+    state: absent
+  become: true
+  tags:
+    - never
+    - uninstall
+
+- name: Reload systemd after removing service
+  ansible.builtin.systemd_service:
+    daemon_reload: yes
+  become: true
+  tags:
+    - never
+    - uninstall
+
+
+
+## 06. SETUP FIREWALL FOR GRAFANA
+# This section sets up the firewall rules to allow the service traffic
+# -----------------------------------------------------------------------------
+
+- name: Deploy Grafana UFW application profile
+  ansible.builtin.template:
+    src: templates/grafana-ufw-profile.j2
+    dest: "/etc/ufw/applications.d/{{ grafana_systemd_name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Reload UFW Grafana application profiles
+  ansible.builtin.command: "ufw app update {{ grafana_systemd_name }}"
+  become: true
+  changed_when: false
+  failed_when: false
+  tags:
+    - install
+    - config
+
+- name: Allow Grafana through UFW using application profile
+  ansible.builtin.ufw:
+    rule: allow
+    name: "Grafana Web UI"
+    comment: "Allow Grafana ({{ monitoring_grafana.port }}/tcp) from LOCAL NET"
+    src: "{{ item }}"
+  loop: "{{ networking_networks.local }}"
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Confirm Grafana UFW profile is allowed for local networks
+  ansible.builtin.command: "ufw status numbered"
+  register: ufw_status
+  changed_when: false
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Assert Grafana UFW rule exists for each local network
+  ansible.builtin.assert:
+    that:
+      - "'Grafana Web UI' in ufw_status.stdout and item in ufw_status.stdout"
+    fail_msg: "Grafana Web UI UFW rule is NOT present for {{ item }}"
+    success_msg: "Grafana Web UI UFW rule is present for {{ item }}"
+  loop: "{{ networking_networks.local }}"
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Remove UFW rules for Grafana application profile on uninstall
+  ansible.builtin.ufw:
+    rule: deny
+    name: "Grafana Web UI"
+    delete: yes
+  become: true
+  failed_when: false
+  tags:
+    - uninstall
+    - never
+
+- name: Remove Grafana UFW application profile on uninstall
+  ansible.builtin.file:
+    path: "/etc/ufw/applications.d/{{ grafana_systemd_name }}"
+    state: absent
+  become: true
+  tags:
+    - uninstall
+    - never
+
+
+## 07. SETUP NGINX PROXY FOR GRAFANA
+# This section sets up the Nginx proxy location for Grafana
+# -----------------------------------------------------------------------------
+
+- name: Deploy Grafana Nginx location configuration
+  ansible.builtin.template:
+    src: templates/grafana-nginx-location.j2
+    dest: "/etc/nginx/conf.d/{{ ansible_hostname }}-{{ grafana_systemd_name }}.conf"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Test Nginx configuration
+  ansible.builtin.command: nginx -t
+  register: nginx_test
+  changed_when: false
+  failed_when: nginx_test.rc != 0
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Restart Nginx after location configuration
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: restarted
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Delete Nginx location config for Grafana on uninstall
+  ansible.builtin.file:
+    path: "/etc/nginx/conf.d/{{ ansible_hostname }}-{{ grafana_systemd_name }}.conf"
+    state: absent
+  become: true
+  tags:
+    - never
+    - uninstall
+
+- name: Restart Nginx after location configuration deleted on uninstall
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: restarted
+  become: true
+  tags:
+    - never
+    - uninstall
+
+## GRAFANA PROVISIONING
+# -----------------------------------------------------------------------------
+
+- name: Provision Grafana systemd status dashboard panel
+  ansible.builtin.template:
+    src: templates/grafana-panel-systemd-status.json.j2
+    dest: "{{ monitoring_grafana.dashboard_dir }}/grafana-panel-systemd-status.json"
+    owner: "{{ grafana_user }}"
+    group: "{{ grafana_group }}"
+    mode: '0644'
+  become: true
+  tags:
+    - install
+    - config
+    - dashboards
+
+
+## 07. HEALTH CHECKS FOR GRAFANA
+# -----------------------------------------------------------------------------
+- name: Wait for Grafana to be available
+  ansible.builtin.wait_for:
+    host: "{{ monitoring_grafana.listening_address }}"
+    port: "{{ monitoring_grafana.port }}"
+    delay: 5
+    timeout: 30
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Check Grafana web UI is accessible
+  ansible.builtin.uri:
+    url: "http://{{ monitoring_grafana.listening_address }}:{{ monitoring_grafana.port }}/{{ monitoring_grafana.path_prefix }}/login"
+    method: GET
+    status_code: 200
+  register: grafana_health
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Assert Grafana is healthy
+  ansible.builtin.assert:
+    that:
+      - grafana_health.status == 200
+    fail_msg: "Grafana health check endpoint failed."
+    success_msg: "Grafana health check endpoint is responding correctly."
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Display Grafana access information
+  ansible.builtin.debug:
+    msg:
+      - "=== Grafana Health Check Summary ==="
+      - "Service Status: {{ grafana_service_status.status.ActiveState }}"
+      - "Web UI: http://{{ ansible_host }}:{{ grafana_port }}/login"
+      - "Health Status: {{ grafana_health.status }} (Healthy)"
+      - "Firewall: Active for local networks"
+      - "=== End Summary ==="
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+# END OF GRAFANA TASKS

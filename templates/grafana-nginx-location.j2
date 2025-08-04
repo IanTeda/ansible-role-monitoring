@@ -1,0 +1,32 @@
+# ============================================================================
+# Nginx Location Config for Grafana
+# ============================================================================
+# ⚠️ WARNING: This file is managed by Ansible - DO NOT EDIT MANUALLY! ⚠️
+# Any manual changes will be overwritten on the next Ansible run.
+# Edit the template file or Ansible variables instead.
+#
+# Template path: roles/monitoring/templates/grafana-nginx-location.j2
+# Deploy path: /etc/nginx/conf.d/{{ ansible_hostname }}-{{ grafana_systemd_name }}.conf
+# Last updated: {{ ansible_date_time.iso8601 }}
+#
+# Reference: https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/
+#
+# Update 2025-07-18:
+# - Minimal Nginx location config for Grafana
+# =============================================================================
+
+location /grafana/ {
+    proxy_pass         http://{{ monitoring_grafana.listening_address }}:{{ monitoring_grafana.port }}/{{ monitoring_grafana.path_prefix }}/;
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_read_timeout 360;
+    proxy_set_header   Upgrade $http_upgrade;
+    proxy_set_header   Connection "upgrade";
+
+    # Optional: Security headers    sudo ss -tuln | grep 3030
+    # add_header X-Frame-Options SAMEORIGIN;
+    # add_header X-Content-Type-Options nosniff;
+}

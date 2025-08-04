@@ -1,0 +1,22 @@
+# =============================================================================
+# Grafana UFW Application Profile
+# =============================================================================
+# ⚠️ WARNING: This file is managed by Ansible - DO NOT EDIT MANUALLY! ⚠️
+# Any manual changes will be overwritten on the next Ansible run.
+# Edit the template file or Ansible variables instead.
+#
+# Template path: roles/monitoring/templates/grafana-ufw-profile.j2
+# Deploy path: /etc/ufw/applications.d/grafana
+# Last updated: {{ ansible_date_time.iso8601 }}
+# =============================================================================
+#
+# Reference: https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/
+#
+# Update 2025-07-18:
+# - Minimal UFW profile for Grafana Web UI
+# =============================================================================
+
+[Grafana Web UI]
+title=Grafana Web UI
+description=Grafana dashboard and API web interface
+ports={{ monitoring_grafana.port }}/tcp

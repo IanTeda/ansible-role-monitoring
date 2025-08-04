@@ -1,0 +1,73 @@
+# =============================================================================
+# Grafana Minimal Configuration
+# =============================================================================
+# ⚠️ WARNING: This file is managed by Ansible - DO NOT EDIT MANUALLY!       ⚠️
+# Any manual changes will be overwritten on the next Ansible run.
+# Edit the template file or Ansible variables instead.
+#
+# Generated from: roles/monitoring/templates/grafana-config.conf.j2
+# Deployed to: {{ grafana_config_file }}
+# Last updated: {{ ansible_date_time.iso8601 }}
+#
+# Reference: 
+# - https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/
+# - https://github.com/grafana/grafana/blob/main/conf/defaults.ini
+#
+# Update 2025-07-18:
+#   - Minimal config to get started
+# =============================================================================
+
+app_mode = production
+instance_name = ${HOSTNAME}
+
+# These are relative to the Grafana working direcotry
+[paths]
+data =  {{ grafana_data_dir }}
+plugins = {{ monitoring_grafana.plugin_dir }}
+provisioning = {{ monitoring_grafana.provisioning_dir }}
+
+[server]
+protocol = http
+http_addr = '{{ monitoring_grafana.listening_address }}'
+http_port = '{{ monitoring_grafana.port }}'
+domain = '{{ ansible_fqdn | default('localhost') }}'
+root_url = %(protocol)s://%(domain)s:%(http_port)s/{{ monitoring_grafana.path_prefix }}/
+serve_from_sub_path = true
+socket = /run/{{ grafana_user }}/grafana.sock
+
+[security]
+admin_user = '{{ monitoring_grafana.admin.user }}'
+admin_password = '{{ monitoring_grafana.admin.password }}'
+admin_email = '{{ monitoring_grafana.admin.email }}'
+
+[users]
+allow_sign_up = false
+
+[snapshots]
+enabled = false
+
+[database]
+type = postgres
+host = '127.0.0.1:{{ databases_postgres.port | default('5432') }}'
+name = '{{ monitoring_grafana.postgres.database }}'
+user = '{{ monitoring_grafana.postgres.user }}'
+password = '{{ monitoring_grafana.postgres.password }}'
+ssl_mode = 'disable'
+
+#TODO: Add redis
+
+[log]
+mode = console
+level = '{{ monitoring_grafana.log_level }}'
+
+[log.console]
+level = info
+format = console
+
+[log.systemd]
+enabled = true
+
+[analytics]
+reporting_enabled = false
+check_for_updates = true
+check_for_plugin_updates = true

@@ -1,0 +1,85 @@
+# ------------------------------------------------------------------------------
+# Monitoring Role - Main Tasks
+# ------------------------------------------------------------------------------
+#
+# Main task file for the Monitoring role.
+# Detects the operating system and includes appropriate task files.
+#
+# ------------------------------------------------------------------------------
+
+---
+
+- name: Detect operating system
+  ansible.builtin.debug:
+    msg: "Detected OS: {{ ansible_os_family }} ({{ ansible_distribution }} {{ ansible_distribution_version }})"
+  tags:
+    - <service>
+    - debug
+
+
+
+## Debian family tasks block
+# ------------------------------------------------------------------------------
+
+- name: Debian family tasks block
+  when: ansible_os_family == "Debian"
+  block:
+    - name: Starting the Debian Block
+      ansible.builtin.debug:
+        msg: "Starting tasks for Debian"
+
+    - name: Install Prometheus Monitoring
+      ansible.builtin.include_tasks: prometheus-debian.yaml
+      tags:
+        - prometheus
+
+    - name: Install Loki Log Aggregator
+      ansible.builtin.include_tasks: loki-debian.yaml
+      tags:
+        - loki
+
+    - name: Install Alloy Monitoring Agent
+      ansible.builtin.include_tasks: alloy-debian.yaml
+      tags:
+        - alloy
+
+    - name: Install Node exporter
+      ansible.builtin.include_tasks: node-exporter-debian.yaml
+      tags:
+        - node-exporter
+
+    - name: Install Grafana
+      ansible.builtin.include_tasks: grafana-debian.yaml
+      tags:
+        - grafana
+
+## RedHat family tasks block
+# ------------------------------------------------------------------------------
+- name: Include RedHat-specific tasks
+  when: ansible_os_family == "RedHat"
+  block:
+    - name: Starting the RedHat Block
+      ansible.builtin.debug:
+        msg: "Starting tasks for RedHat"
+
+
+
+## Linux-specific tasks block
+# ------------------------------------------------------------------------------
+- name: Include Linux-specific tasks
+  when: ansible_system == "Linux" and ansible_os_family not in ["Debian", "RedHat"]
+  block:
+    - name: Starting the Linux Block
+      ansible.builtin.debug:
+        msg: "Starting tasks for Linux"
+
+
+
+## Fail if unsupported operating system
+# ------------------------------------------------------------------------------
+- name: Fail if unsupported operating system
+  ansible.builtin.fail:
+    msg: "Unsupported operating system: {{ ansible_os_family }} ({{ ansible_distribution }})"
+  when: ansible_system != "Linux" and ansible_os_family not in ["Debian", "RedHat"]
+  tags:
+    - <service>

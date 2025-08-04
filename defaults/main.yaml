@@ -1,0 +1,51 @@
+# ------------------------------------------------------------------------------
+# <Service> Role Default Variables
+# ------------------------------------------------------------------------------
+#
+# Default configuration variables for the Ansible <service> role.
+#
+# These variables can be overridden, with group, host or playbook specific variables
+# using the same name:
+#   - group_vars/
+#   - host_vars/
+#   - playbook vars
+# Note: Ansible will override everything under the root database_ variable. Meaning
+# you need to include all variables when overriding, else there others will not
+# be found.
+# ------------------------------------------------------------------------------
+
+---
+
+networking_networks:
+  local:
+    - '192.168.1.0/16'
+    - '10.0.0.0/8'
+
+# ---------------------------- [ Monitoring ] ----------------------------------
+
+monitoring_group: 'monitoring'                      # Group for monitoring users
+
+# Grafana
+monitoring_grafana:
+  user: 'grafana'                                   # System user for Grafana
+  group: '{{ monitoring_group }}'                   # Group for Grafana user
+  version: '12.0.2+security-01'                     # Latest stable version https://grafana.com/grafana/download
+  listening_address: '127.0.0.1'                    # IP address Grafana listens on
+  port: 3030                                        # Web interface port
+  path_prefix: 'grafana'                            # URL path prefix for Grafana
+  log_level: 'warn'
+  provisioning_dir: '/etc/grafana/provisioning'             # Path for Grafana provisioning files
+  plugin_dir:       '/etc/grafana/provisioning/plugins'     # Path for Grafana plugins
+  datasource_dir:   '/etc/grafana/provisioning/datasources' # Path for Grafana datasource files
+  dashboard_dir:    '/etc/grafana/provisioning/dashboards'  # Path for Grafana dashboard files
+  alerting_dir:     '/etc/grafana/provisioning/alerting'    # Path for Grafana alerting files
+  playlist_dir:     '/etc/grafana/provisioning/playlists'   # Path for Grafana playlist files
+  folders_dir:      '/etc/grafana/provisioning/folders'     # Path for Grafana folders files
+  admin:
+    user: '{{ vault_grafana_admin_user }}'          # Grafana admin user
+    password: '{{ vault_grafana_admin_password }}'  # Grafana admin password
+    email: '{{ vault_default_email }}'        # Grafana admin email
+  postgres:
+    database: 'grafana'                             # PostgreSQL Grafana database name
+    user: '{{ vault_grafana_admin_user }}'          # Grafana database user
+    password: '{{ vault_grafana_admin_password }}'  # Grafana database password
