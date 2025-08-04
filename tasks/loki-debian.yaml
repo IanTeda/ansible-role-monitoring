@@ -1,16 +1,26 @@
 # ============================================================================
 # Ansible Role: Loki (Debian)
 # -----------------------------------------------------------------------------
-# This file manages the installation, configuration, healthcheck, and removal
-# of the Grafana Loki log aggregation service on Debian-based systems.
+# Maintains the installation, configuration, healthcheck, and removal of
+# Grafana Loki log aggregation service on Debian-based systems.
 #
-# Managed by Ansible - DO NOT EDIT MANUALLY!
-# Any manual changes will be overwritten on the next Ansible run.
+# This file is MANAGED BY ANSIBLE. Manual edits will be overwritten.
 #
-# Role: monitoring/tasks/loki-debian.yaml
+# Features:
+#   - Idempotent install, config, and uninstall logic for Loki
+#   - Systemd integration (service management)
+#   - Dedicated system user and group for Loki
+#   - Secure directory and file permissions
+#   - Automated firewall (UFW) profile deployment
+#   - Healthchecks for service and API endpoints
+#   - Automated integration with Grafana as a Loki data source
+#   - Robust uninstall and cleanup logic
+#   - Well-documented, production-ready, and maintainable
+#
+# Role Path: roles/monitoring/tasks/loki-debian.yaml
 # Project: ansible_playbook
 # Maintainer: IanTeda
-# Last updated: {{ ansible_date_time.iso8601 | default('2025-07-18') }}
+# Last updated: {{ ansible_date_time.iso8601 | default('2025-08-04') }}
 # -----------------------------------------------------------------------------
 #
 # Sections:
@@ -23,7 +33,7 @@
 #   06. Setup Firewall for Loki
 #   07. Setup Nginx Location for Loki
 #   08. Healthchecks for Loki
-#
+#   09. Uninstall Loki
 # -----------------------------------------------------------------------------
 
 # 00. SET LOKI ANSIBLE FACTS & CONFIRM UNINSTALLATION

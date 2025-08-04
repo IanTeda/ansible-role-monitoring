@@ -1,0 +1,538 @@
+---
+# ==============================================================================
+# PROMETHEUS SERVER INSTALLATION & CONFIGURATION
+#
+# This task file installs and configures the Prometheus monitoring server
+# for comprehensive system and Bitcoin node monitoring on Debian-based servers.
+#
+# Features:
+#   - Prometheus server for metrics collection and storage
+#   - Secure configuration with dedicated system user and group
+#   - Firewall rules for local network access only
+#   - Systemd service integration for automatic startup
+#   - Web interface accessible via nginx reverse proxy
+#   - Optimised retention and storage settings
+#   - Modular: Node Exporter and Alertmanager are included via import_tasks
+#
+# Last updated: 2025-07-13
+# ==============================================================================
+
+
+## 00. SET PROMETHEUS ANSIBLE FACTS
+# This makes it easier to read the ansible tasks
+# -----------------------------------------------------------------------------
+
+- name: Set Prometheus facts
+  ansible.builtin.set_fact:
+    prometheus_user: "{{ monitoring_prometheus.user }}"
+    prometheus_group: "{{ monitoring_group }}"
+    prometheus_config_dir: "/etc/{{ monitoring_prometheus.user }}"
+    prometheus_data_dir: "/data/{{ monitoring_prometheus.user }}"
+    prometheus_systemd_name: "{{ monitoring_prometheus.user }}"
+    prometheus_download_url: "https://github.com/prometheus/prometheus/releases/download/v{{ monitoring_prometheus.version }}/prometheus-{{ monitoring_prometheus.version }}.linux-amd64.tar.gz"
+  tags: [install, config, uninstall, verify, healthcheck, debug]
+
+- name: Display Alloy facts for debugging
+  ansible.builtin.debug:
+    msg:
+      - "Fact -> prometheus_user: {{ prometheus_user }}"
+      - "Fact -> prometheus_group: {{ prometheus_group }}"
+      - "Fact -> prometheus_config_dir: {{ prometheus_config_dir }}"
+      - "Fact -> prometheus_data_dir: {{ prometheus_data_dir }}"
+      - "Fact -> prometheus_systemd_name: {{ prometheus_systemd_name }}"
+      - "Fact -> prometheus_download_url: {{ prometheus_download_url }}"
+      - "Var  -> monitoring_prometheus.version: {{ monitoring_prometheus.version }}"
+  tags: [debug]
+
+
+
+## 01. SHUTDOWN PROMETHEUS SERVICES
+# This section ensures that the service is stopped before config any changes and
+# updates are applied to prevent conflict issues.
+# -----------------------------------------------------------------------------
+
+- name: Check if Prometheus service exists
+  ansible.builtin.stat:
+    path: "/lib/systemd/system/{{ prometheus_systemd_name }}.service"
+  register: service_file
+  tags: [install, config]
+
+- name: Ensure Prometheus service is stopped before modifying
+  ansible.builtin.systemd:
+    name: "{{ prometheus_systemd_name }}"
+    state: stopped
+  become: true
+  failed_when: false
+  when: service_file.stat.exists
+  tags: [install, config]
+
+
+
+## 02. SET UP PROMETHEUS USER & CREATE SERVICE DIRECTORIES
+# This section sets up the system user and group to run the service and create
+# all the directories for the service
+# -----------------------------------------------------------------------------
+
+- name: Ensure Prometheus group exists
+  ansible.builtin.group:
+    name: "{{ prometheus_group }}"
+    state: present
+  become: true
+  tags: [install, user_group]
+
+- name: Create Prometheus system user
+  ansible.builtin.user:
+    name: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+    comment: "Prometheus Monitoring Service System Account"
+  become: true
+  tags: [install, user_group]
+
+- name: Create directories for Prometheus service
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ prometheus_config_dir }}", mode: "0755" }
+    - { path: "{{ monitoring_prometheus.scraper_config_dir }}", mode: "0750" }
+    - { path: "{{ prometheus_data_dir }}",   mode: "0750" }
+  become: true
+  tags: [install, directories]
+
+
+
+## 03A. DOWNLOAD, INSTALL & VERIFY PROMETHEUS
+# This section downloads the binary, installs it, and verifies the installation.
+# -----------------------------------------------------------------------------
+
+- name: Download Prometheus v{{ monitoring_prometheus.version }}
+  ansible.builtin.get_url:
+    url: "{{ prometheus_download_url }}"
+    dest: "/tmp/prometheus-{{ monitoring_prometheus.version }}.tar.gz"
+    mode: '0644'
+    timeout: 60
+  become: true
+  retries: 3
+  delay: 5
+  register: download_result
+  until: download_result is succeeded
+  tags: [install]
+
+- name: Ensure temporary extract directory exists
+  ansible.builtin.file:
+    path: "/tmp/prometheus-{{ monitoring_prometheus.version }}-extract"
+    state: directory
+    mode: '0755'
+  become: true
+  tags: [install]
+
+- name: Extract Prometheus archive
+  ansible.builtin.unarchive:
+    src: "/tmp/prometheus-{{ monitoring_prometheus.version }}.tar.gz"
+    dest: "/tmp/prometheus-{{ monitoring_prometheus.version }}-extract"
+    remote_src: yes
+    extra_opts: ["--strip-components=1"]
+  become: true
+  tags: [install]
+
+- name: Install Prometheus binaries
+  ansible.builtin.copy:
+    src: "/tmp/prometheus-{{ monitoring_prometheus.version }}-extract/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    owner: root
+    group: root
+    mode: '0755'
+    remote_src: yes
+  loop:
+    - prometheus
+    - promtool
+  become: true
+  tags: [install]
+
+- name: Verify prometheus binary version
+  ansible.builtin.command: "/usr/local/bin/prometheus --version"
+  register: prometheus_version_check
+  changed_when: false
+  tags: [install, verify, healthcheck]
+
+- name: Assert correct prometheus version is installed
+  ansible.builtin.assert:
+    that:
+      - "prometheus_version_check.stdout is search('version[ ]+{{ monitoring_prometheus.version }}')"
+    fail_msg: "Prometheus version check failed. Expected {{ monitoring_prometheus.version }}, got {{ prometheus_version_check.stdout }}."
+    success_msg: "Prometheus v{{ monitoring_prometheus.version }} binary installed successfully."
+  tags: [install, verify, healthcheck]
+
+- name: Clean up downloaded archives and temp directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/tmp/prometheus-{{ monitoring_prometheus.version }}.tar.gz"
+    - "/tmp/prometheus-{{ monitoring_prometheus.version }}-extract"
+  become: true
+  tags: [install, cleanup]
+
+
+
+## 04. SETUP CONFIG FILES FOR PROMETHEUS
+# This section sets up the configuration files file for the service
+# -----------------------------------------------------------------------------
+
+- name: Deploy Prometheus configuration file
+  ansible.builtin.template:
+    src: templates/prometheus-config.yml.j2
+    dest: "{{ prometheus_config_dir }}/prometheus.yml"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: '0640'
+  become: true
+  tags: [install, config]
+
+- name: Deploy Prometheus scrape config
+  ansible.builtin.template:
+    src: "templates/prometheus-exporter-conf.yml.j2"
+    dest: "{{ monitoring_prometheus.scraper_config_dir }}/{{ prometheus_user }}-scraper.yml"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: '0640'
+  become: true
+  tags: [install, config]
+
+- name: Verify Prometheus configuration file is valid
+  ansible.builtin.command: "/usr/local/bin/promtool check config {{ prometheus_config_dir }}/prometheus.yml"
+  register: config_verify
+  changed_when: false
+  failed_when: config_verify.rc != 0
+  become: true
+  become_user: "{{ prometheus_user }}"
+  tags: [install, config, verify]
+
+- name: Configure Prometheus as a Grafana data source using the Ansible Grafana module
+  community.grafana.grafana_datasource:
+    name: "{{ prometheus_user }}-source"
+    grafana_url: "http://{{ monitoring_grafana.listening_address }}:{{ monitoring_grafana.port }}"
+    grafana_user: "{{ monitoring_grafana.admin.user }}"
+    grafana_password: "{{ monitoring_grafana.admin.password }}"
+    ds_type: prometheus
+    access: proxy
+    ds_url: "http://{{ monitoring_prometheus.listen_address }}:{{ monitoring_prometheus.port }}"
+    is_default: false
+    state: present
+    validate_certs: false
+  tags: [install, config]
+
+
+
+## 05. SETUP SYSTEMD FOR PROMETHEUS
+# This section sets up the systemd unit file for the service
+# -----------------------------------------------------------------------------
+
+- name: Deploy Prometheus systemd unit file
+  ansible.builtin.template:
+    src: templates/prometheus-systemd.service.j2
+    dest: "/lib/systemd/system/{{ prometheus_systemd_name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, config, systemd]
+
+
+- name: Verify Prometheus systemd service config is valid
+  ansible.builtin.command: "systemd-analyze verify /lib/systemd/system/{{ prometheus_systemd_name }}.service"
+  register: systemd_verify
+  changed_when: false
+  failed_when: systemd_verify.rc != 0
+  tags: [install, config, systemd, verify]
+
+
+- name: Reload systemd and start Prometheus service
+  ansible.builtin.systemd_service:
+    daemon_reload: yes
+    name: "{{ prometheus_systemd_name }}"
+    enabled: yes
+    state: started
+  become: true
+  tags: [install, config, systemd]
+
+
+
+## 06. SETUP FIREWALL FOR PROMETHEUS
+# This section sets up the firewall rules to allow the service traffic
+# -----------------------------------------------------------------------------
+
+- name: Deploy Prometheus UFW application profile
+  ansible.builtin.template:
+    src: "templates/prometheus-ufw-profile.j2"
+    dest: "/etc/ufw/applications.d/{{ prometheus_systemd_name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, config, firewall]
+
+
+- name: Reload UFW Prometheus application profiles
+  ansible.builtin.command: "ufw app update {{ prometheus_systemd_name }}"
+  become: true
+  changed_when: false
+  failed_when: false
+  tags: [install, config, firewall]
+
+
+- name: Allow Prometheus Web Interface through UFW from local networks
+  ansible.builtin.ufw:
+    rule: allow
+    name: "Prometheus Web Interface"
+    comment: "Allow Prometheus ({{ prometheus.port | default('9090') }}/tcp) from LOCAL NET"
+    src: "{{ item }}"
+  loop: "{{ networking_networks.local }}"
+  become: true
+  tags: [install, config, firewall]
+
+- name: Confirm Prometheus UFW profile is allowed for local networks
+  ansible.builtin.command: "ufw status numbered"
+  register: ufw_status
+  changed_when: false
+  tags: [install, config, firewall, verify, healthcheck]
+
+
+- name: Assert Prometheus UFW rule exists for each local network
+  ansible.builtin.assert:
+    that:
+      - "ufw_status.stdout is search('Prometheus Web Interface') and ufw_status.stdout is search(item)"
+    fail_msg: "Prometheus UFW rule is NOT present for {{ item }}"
+    success_msg: "Prometheus UFW rule is present for {{ item }}"
+  loop: "{{ networking_networks.local }}"
+  tags: [install, config, firewall, verify, healthcheck]
+
+
+
+## 07. SETUP NGINX PROXY FOR PROMETHEUS
+# This section sets up the Nginx proxy location
+# -----------------------------------------------------------------------------
+
+- name: Deploy Prometheus Nginx location configuration
+  ansible.builtin.template:
+    src: templates/prometheus-nginx-location.j2
+    dest: "/etc/nginx/conf.d/{{ ansible_hostname }}-{{ prometheus_systemd_name }}.conf"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, config, nginx]
+
+
+- name: Test Nginx configuration
+  ansible.builtin.command: nginx -t
+  register: nginx_test
+  changed_when: false
+  failed_when: nginx_test.rc != 0
+  become: true
+  tags: [install, config, nginx, verify]
+
+
+- name: Restart Nginx to apply new configuration
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: restarted
+  become: true
+  tags: [install, config, nginx, verify]
+
+
+
+
+## 08. HEALTH CHECKS FOR PROMETHEUS
+# This section runs healthchecks for the service to confirm it is running as expected
+# -----------------------------------------------------------------------------
+
+- name: Verify Prometheus service is active
+  ansible.builtin.systemd:
+    name: "{{ prometheus_systemd_name }}"
+  register: service_status
+  changed_when: false
+  tags: [install, config, verify, healthcheck]
+
+
+- name: Assert Prometheus service is running
+  ansible.builtin.assert:
+    that:
+      - service_status.status.ActiveState == "active"
+    fail_msg: "Prometheus service is NOT active."
+    success_msg: "Prometheus service is active."
+  tags: [install, config, verify, healthcheck]
+
+
+- name: Wait for Prometheus web UI to be available
+  ansible.builtin.wait_for:
+    host: "{{ monitoring_prometheus.listen_address }}"
+    port: "{{ monitoring_prometheus.port }}"
+    delay: 5
+    timeout: 30
+  tags: [install, config, verify, healthcheck]
+
+
+- name: Check Prometheus health endpoint
+  ansible.builtin.uri:
+    url: "http://{{ monitoring_prometheus.listen_address }}:{{ monitoring_prometheus.port }}/{{ monitoring_prometheus.path_prefix }}/-/healthy"
+    method: GET
+    status_code: 200
+  register: prometheus_health
+  tags: [install, config, verify, healthcheck]
+
+
+- name: Assert Prometheus is healthy
+  ansible.builtin.assert:
+    that:
+      - prometheus_health.status == 200
+    fail_msg: "Prometheus health check endpoint failed."
+    success_msg: "Prometheus health check endpoint is responding correctly."
+  tags: [install, config, verify, healthcheck]
+
+
+- name: Display Prometheus access information
+  ansible.builtin.debug:
+    msg:
+      - "=== Prometheus Health Check Summary ==="
+      - "Service Status: {{ service_status.status.ActiveState }}"
+      - "Direct Access: http://{{ monitoring_prometheus.listen_address }}:{{ monitoring_prometheus.port }}/{{ monitoring_prometheus.path_prefix }}/"
+      - "Nginx Proxy: http://{{ monitoring_prometheus.listen_address }}/{{ monitoring_prometheus.path_prefix }}/"
+      - "Health Endpoint: {{ prometheus_health.status }} (Healthy)"
+      - "Configuration: Valid"
+      - "Firewall: Active for local networks"
+      - "=========== End Summary ==============="
+  tags: [install, config, verify, healthcheck]
+
+
+
+## 99 . UNINSTALL PROMETHEUS
+# This section uninstalls the service and removes all related files
+# -----------------------------------------------------------------------------
+
+- name: Confirm Prometheus uninstallation
+  ansible.builtin.pause:
+    prompt: |
+      ⚠️  WARNING: Prometheus Uninstallation Confirmation ⚠️
+      
+      You are about to completely uninstall the Prometheus service from this system.
+      
+      This will remove:
+      🗑️  Service binary: /usr/local/bin/prometheus
+      🗑️  Systemd service: {{ prometheus_systemd_name }}.service
+      🗑️  Configuration files: {{ prometheus_config_dir }}/
+      🗑️  User account: {{ prometheus_user }}
+      🗑️  UFW firewall rules: Prometheus Web Interface
+      
+      Are you sure you want to proceed with the uninstallation? (yes/no)
+  register: uninstall_confirmation
+  tags: [never, uninstall]
+
+- name: Abort uninstallation - user chose not to proceed
+  ansible.builtin.fail:
+    msg: |
+      🛑 Uninstallation ABORTED by user choice
+      
+      The Prometheus service remains installed and operational.
+      No changes have been made to the system.
+  when: not (uninstall_confirmation.user_input | bool)
+  tags: [never, uninstall]
+
+- name: Stop and disable Prometheus service for uninstallation
+  ansible.builtin.systemd:
+    name: "{{ prometheus_systemd_name }}"
+    state: stopped
+    enabled: no
+  become: true
+  failed_when: false
+  tags: [uninstall, never]
+
+- name: Remove Prometheus user during uninstallation
+  ansible.builtin.user:
+    name: "{{ prometheus_user }}"
+    state: absent
+    remove: true
+    force: true
+  become: true
+  failed_when: false
+  tags: [uninstall, never]
+
+- name: Remove Prometheus directories during uninstall
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ prometheus_config_dir }}"
+    - "{{ prometheus_data_dir }}"
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove Prometheus binaries during uninstall
+  ansible.builtin.file:
+    path: "/usr/local/bin/{{ item }}"
+    state: absent
+  loop:
+    - prometheus
+    - promtool
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove Prometheus configuration files during uninstall
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ prometheus_config_dir }}/prometheus.yml"
+    - "{{ monitoring_prometheus.scraper_config_dir }}/scrape-prometheus.yml"
+    - "{{ monitoring_prometheus.scraper_config_dir }}"
+  become: true
+  tags: [never, uninstall]
+
+- name: Delete Prometheus systemd service
+  ansible.builtin.file:
+    path: "/lib/systemd/system/{{ prometheus_systemd_name }}.service"
+    state: absent
+  become: true
+  tags: [uninstall, never]
+
+- name: Reload systemd after removing Prometheus service
+  ansible.builtin.systemd_service:
+    daemon_reload: yes
+  become: true
+  tags: [uninstall, never]
+
+- name: Remove UFW rules for Prometheus Web Interface
+  ansible.builtin.ufw:
+    rule: deny
+    name: "Prometheus Web Interface"
+    delete: yes
+  become: true
+  failed_when: false
+  tags: [uninstall, never]
+
+- name: Remove Prometheus UFW application profile
+  ansible.builtin.file:
+    path: "/etc/ufw/applications.d/{{ prometheus_systemd_name }}"
+    state: absent
+  become: true
+  tags: [uninstall, never]
+
+- name: Delete Nginx location config for Prometheus
+  ansible.builtin.file:
+    path: "/etc/nginx/conf.d/{{ ansible_hostname }}-{{ prometheus_systemd_name }}.conf"
+    state: absent
+  become: true
+  tags: [uninstall, never]
+
+- name: Restart Nginx after Prometheus location configuration deleted
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: restarted
+  become: true
+  tags: [uninstall, never]

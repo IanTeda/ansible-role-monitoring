@@ -1,0 +1,95 @@
+# ------------------------------------------------------------------------------
+# Prometheus Systemd Service Unit File
+# ------------------------------------------------------------------------------
+#
+# This systemd service file configures Prometheus to run as a system service,
+# providing time-series data collection, storage, and alerting.
+#
+# Features:
+#   - Runs as a dedicated, unprivileged user.
+#   - Hardened with modern systemd security features.
+#   - Logs directly to the systemd journal.
+#
+# Configuration:
+#   - Config file: {{ prometheus_config_dir }}/prometheus.yml
+#   - Data directory: {{ prometheus_data_dir }}
+#   - User: {{ prometheus_user }}
+#   - Working directory: {{ prometheus_data_dir }}
+#   - Binary location: /usr/local/bin/prometheus
+#   - Logs: sudo journalctl -u {{ prometheus_systemd_name }} -f
+#
+# Security Notes:
+#   - Prometheus runs with limited privileges and restricted filesystem access.
+#
+# Dependencies:
+#   - Requires network.target to be active.
+#
+# References:
+#   - https://prometheus.io/docs/
+#
+# Last updated: 2025-07-13
+# ------------------------------------------------------------------------------
+
+[Unit]
+Description=Prometheus Time Series Collection and Processing Server
+Documentation=https://prometheus.io/docs/introduction/overview/
+
+# Service Dependencies
+######################
+After=network.target
+Requires=network.target
+
+[Service]
+# The folder to run the ExecStart command from
+WorkingDirectory={{ prometheus_data_dir }}
+
+# Prometheus binary and configuration
+ExecStart=/usr/local/bin/prometheus --config.file="{{ prometheus_config_dir }}/prometheus.yml" \
+                                    --storage.tsdb.path="{{ prometheus_data_dir }}" \
+                                    --web.listen-address="127.0.0.1:{{ monitoring_prometheus.port }}" \
+                                    --web.enable-lifecycle \
+                                    --storage.tsdb.retention.time="30d" \
+                                    --web.route-prefix="{{ monitoring_prometheus.path_prefix }}" \
+                                    --log.level="{{ monitoring_prometheus.log_level }}"
+
+# Process management
+####################
+Type=simple
+Restart=on-failure
+RestartSec=10
+
+# Directory creation and permissions
+####################################
+User={{ prometheus_user }}
+Group={{ monitoring_group }}
+
+# Set permissions for the runtime directory
+RuntimeDirectory={{ prometheus_user }}
+RuntimeDirectoryMode=0755
+
+# Grant access to the configuration and data directories
+ReadOnlyPaths={{ prometheus_config_dir }}
+ReadWritePaths={{ prometheus_data_dir }}
+
+# Logging to systemd
+####################
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{ prometheus_user }}
+
+# Hardening measures
+####################
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
+PrivateDevices=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target

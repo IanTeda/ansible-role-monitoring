@@ -1,0 +1,47 @@
+# ==============================================================================
+# WARNING: THIS FILE IS MANAGED BY ANSIBLE
+#
+# Any manual changes will be overwritten on the next playbook run.
+# Please edit the template file in the Ansible role instead.
+# Source: roles/debian/templates/prometheus-config.yml.j2
+# ==============================================================================
+
+# Prometheus Main Configuration
+# =============================
+#
+# This is the main configuration file for Prometheus. It sets global defaults
+# and discovers scrape configurations from files located in the conf.d/ directory.
+# This approach allows for modular and clean management of monitoring targets.
+#
+# Created: 2025-07-13
+#==============================================================================
+
+global:
+  # How frequently to scrape targets by default.
+  scrape_interval: 15s
+
+  # How frequently to evaluate rules.
+  evaluation_interval: 15s
+
+  # Attach these labels to any time series or alerts when communicating with
+  # external systems (federation, remote storage, Alertmanager).
+  external_labels:
+    monitor: '{{ monitoring_prometheus.user }}'
+    instance: '{{ ansible_hostname }}'
+
+# A list of files to glob for scrape configurations.
+# All .yml files in the conf.d directory will be loaded.
+scrape_config_files:
+  - '{{ monitoring_prometheus.scraper_config_dir }}/*.yml'
+
+# Alerting specifies settings related to the Alertmanager.
+# (Disabled by default)
+# alerting:
+#   alertmanagers:
+#   - static_configs:
+#     - targets:
+#       # - alertmanager:9093
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+# rule_files:
+#   - "rules/*.yml"

@@ -1,0 +1,17 @@
+# UFW Application Profile for Prometheus
+# =====================================
+#
+# UFW firewall profile for Prometheus monitoring server.
+# Allows access to Prometheus web interface from local networks only.
+#
+# Port: {{ monitoring_prometheus.port }} (default Prometheus web interface)
+# Protocol: TCP
+# Access: Local networks only for security
+#
+# Created: 2025-06-29
+#==============================================================================
+
+[Prometheus Web Interface]
+title=Prometheus Time Series Database
+description=Prometheus monitoring system web interface for metrics collection and visualisation
+ports={{ monitoring_prometheus.port }}/tcp
