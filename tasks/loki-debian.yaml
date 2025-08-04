@@ -1,0 +1,491 @@
+# ============================================================================
+# Ansible Role: Loki (Debian)
+# -----------------------------------------------------------------------------
+# This file manages the installation, configuration, healthcheck, and removal
+# of the Grafana Loki log aggregation service on Debian-based systems.
+#
+# Managed by Ansible - DO NOT EDIT MANUALLY!
+# Any manual changes will be overwritten on the next Ansible run.
+#
+# Role: monitoring/tasks/loki-debian.yaml
+# Project: ansible_playbook
+# Maintainer: IanTeda
+# Last updated: {{ ansible_date_time.iso8601 | default('2025-07-18') }}
+# -----------------------------------------------------------------------------
+#
+# Sections:
+#   00. Set Loki Ansible Facts & Confirm Uninstallation
+#   01. Shutdown Loki Services
+#   02. Set Up Loki User & Create Service Directories
+#   03. Download, Install & Verify Loki
+#   04. Setup Config File for Loki
+#   05. Setup Systemd for Loki
+#   06. Setup Firewall for Loki
+#   07. Setup Nginx Location for Loki
+#   08. Healthchecks for Loki
+#
+# -----------------------------------------------------------------------------
+
+# 00. SET LOKI ANSIBLE FACTS & CONFIRM UNINSTALLATION
+# -------------------------------------------------------------------------------
+
+- name: Set loki directory and file facts
+  ansible.builtin.set_fact:
+    loki_user: "{{ monitoring_loki.user }}"
+    loki_group: "{{ monitoring_loki.group }}"
+    loki_config_dir: "/etc/{{ monitoring_loki.user }}"
+    loki_config_file: "/etc/{{ monitoring_loki.user }}/loki.yaml"
+    loki_data_dir: "/data/{{ monitoring_loki.user }}"
+    loki_systemd_name: "{{ monitoring_loki.user }}"
+    loki_download_url: "https://github.com/grafana/loki/releases/download/v{{ monitoring_loki.release }}/loki-linux-amd64.zip"
+    loki_binary: "/usr/local/bin/loki"
+    loki_http_port: "{{ monitoring_loki.http_port }}"
+    loki_grpc_port: "{{ monitoring_loki.grpc_port }}"
+    loki_listen_address: "{{ monitoring_loki.listen_address }}"
+    loki_log_level: "{{ monitoring_loki.log_level }}"
+  tags:
+    - install
+    - config
+    - systemd
+    - healthcheck
+    - uninstall
+
+
+
+# 01. SHUTDOWN LOKI SERVICES
+# -------------------------------------------------------------------------------
+
+- name: Check if loki service exists
+  ansible.builtin.stat:
+    path: "/lib/systemd/system/{{ loki_systemd_name }}.service"
+  register: loki_service_file
+  tags: [install, config]
+
+- name: If service exists, ensure loki service is stopped before modifying
+  ansible.builtin.systemd:
+    name: "{{ loki_systemd_name }}"
+    state: stopped
+  become: true
+  failed_when: false
+  when: loki_service_file.stat.exists
+  tags: [install, config]
+
+
+
+# 02. SET UP LOKI USER & CREATE SERVICE DIRECTORIES
+# -------------------------------------------------------------------------------
+
+- name: Ensure loki group exists
+  ansible.builtin.group:
+    name: "{{ loki_group }}"
+    state: present
+  become: true
+  tags: [install]
+
+- name: Create loki system user
+  ansible.builtin.user:
+    name: "{{ loki_user }}"
+    group: "{{ loki_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    comment: "Loki Service System Account"
+  become: true
+  tags: [install]
+
+- name: Create directories for loki service
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ loki_user }}"
+    group: "{{ loki_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ loki_config_dir }}", mode: "u=rwx,g=rw,o=" }
+    - { path: "{{ loki_data_dir }}/index",   mode: "u=rwx,g=rx,o="  }
+    - { path: "{{ loki_data_dir }}/cache",   mode: "u=rwx,g=rx,o="  }
+    - { path: "{{ loki_data_dir }}/chunks",   mode: "u=rwx,g=rx,o="  }
+  become: true
+  tags: [install, config]
+
+- name: Ensure loki_data_dir is recursively owned by loki user and group
+  ansible.builtin.file:
+    path: "{{ loki_data_dir }}"
+    owner: "{{ loki_user }}"
+    group: "{{ loki_group }}"
+    recurse: true
+  become: true
+  tags: [install, config]
+
+
+
+# 03. DOWNLOAD, INSTALL & VERIFY LOKI
+# -------------------------------------------------------------------------------
+
+- name: Install Loki dependencies
+  ansible.builtin.apt:
+    name:
+      - unzip
+      - wget
+    state: present
+    update_cache: true
+  become: true
+  tags: [install]
+
+- name: "Download Loki version {{ loki.version }}"
+  ansible.builtin.get_url:
+    url: "{{ loki_download_url }}"
+    dest: "/tmp/loki.zip"
+    mode: '0644'
+    timeout: 60
+  become: true
+  retries: 3
+  delay: 5
+  register: loki_download_result
+  until: loki_download_result is succeeded
+  tags: [install]
+
+- name: Ensure temporary extract folder exists 
+  ansible.builtin.file:
+    path: "/tmp/loki"
+    state: directory
+    mode: '0755'
+  become: true
+  tags: [install]
+
+- name: Unarchive Loki binary
+  ansible.builtin.unarchive:
+    src: "/tmp/loki.zip"
+    dest: "/tmp/loki"
+    remote_src: true
+  become: true
+  tags: [install]
+
+- name: Install Loki binaries
+  ansible.builtin.copy:
+    src: "/tmp/loki/loki-linux-amd64"
+    dest: "{{ loki_binary }}"
+    owner: root
+    group: root
+    mode: 'u=rwx,g=rx,o=rx'
+    remote_src: yes
+  become: true
+  tags: [install]
+
+- name: Verify Loki binary is installed and has correct permissions
+  ansible.builtin.stat:
+    path: "{{ loki_binary }}"
+  register: loki_binary_stat
+  tags: [install]
+
+- name: Assert Loki binary is present, executable, and owned by root
+  ansible.builtin.assert:
+    that:
+      - loki_binary_stat.stat.exists
+      - loki_binary_stat.stat.executable
+      - loki_binary_stat.stat.pw_name == 'root'
+      - loki_binary_stat.stat.gr_name == 'root'
+    fail_msg: "Loki binary is missing, not executable, or has incorrect ownership."
+    success_msg: "Loki binary is present, executable, and has correct ownership."
+  tags: [install]
+
+- name: Clean up downloaded Loki zip
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  become: true
+  loop:
+    - "/tmp/loki.zip"
+    - "/tmp/loki"
+  tags: [install]
+
+
+
+
+# 04. SETUP CONFIG FILE FOR LOKI
+# -------------------------------------------------------------------------------
+
+- name: Deploy loki configuration file
+  ansible.builtin.template:
+    src: templates/loki-config.yaml.j2
+    dest: "{{ loki_config_file }}"
+    owner: "{{ loki_user }}"
+    group: "{{ loki_group }}"
+    mode: '0600'
+  become: true
+  tags: [install, config]
+
+# - name: Check Loki configuration file syntax
+#   ansible.builtin.command:
+#     cmd: "{{ loki_binary }} --config.file={{ loki_config_file }} --print-config-stderr"
+#   register: loki_config_check
+#   changed_when: false
+#   failed_when: loki_config_check.rc != 0
+#   become: true
+#   tags:
+#     - install
+#     - config
+#     - verify
+
+- name: Configure Loki as a Grafana data source using the Ansible Grafana module
+  community.grafana.grafana_datasource:
+    name: "{{ loki_user }}-source"
+    grafana_url: "http://{{ monitoring_grafana.listening_address }}:{{ monitoring_grafana.port }}"
+    grafana_user: "{{ monitoring_grafana.admin.user }}"
+    grafana_password: "{{ monitoring_grafana.admin.password }}"
+    ds_type: loki
+    access: proxy
+    ds_url: "http://{{ loki_listen_address }}:{{ loki_http_port }}"
+    is_default: false
+    state: present
+    validate_certs: false
+  become: false
+  tags: [install, config]
+
+
+
+# 05. SETUP SYSTEMD FOR LOKI
+# -------------------------------------------------------------------------------
+
+- name: Deploy systemd unit for Loki
+  ansible.builtin.template:
+    src: templates/loki-systemd.service.j2
+    dest: "/lib/systemd/system/{{ loki_systemd_name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, config, systemd]
+
+- name: Verify loki systemd service config is valid
+  ansible.builtin.command: "systemd-analyze verify /lib/systemd/system/{{ loki_systemd_name }}.service"
+  register: loki_systemd_verify
+  changed_when: false
+  failed_when: loki_systemd_verify.rc != 0
+  tags: [install, config, sytemd, verify]
+
+- name: Reload systemd and start loki service
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    name: "{{ loki_systemd_name }}"
+    enabled: true
+    state: started
+  become: true
+  tags: [install, config, systemd]
+
+- name: Check if Loki service is active
+  ansible.builtin.systemd:
+    name: "{{ loki_systemd_name }}"
+  register: loki_service_status
+  changed_when: false
+  tags: [install, config, verify, healthcheck]
+
+- name: Assert Loki service is running
+  ansible.builtin.assert:
+    that:
+      - loki_service_status.status.ActiveState == "active"
+    fail_msg: "❌ Loki systemd service is NOT active."
+    success_msg: "✅ Loki systemd service is active."
+  tags: [install, config, systemd, verify, healthcheck]
+
+
+
+# 06. SETUP FIREWALL FOR LOKI
+# -------------------------------------------------------------------------------
+
+- name: Deploy loki UFW application profile
+  ansible.builtin.template:
+    src: templates/loki-ufw-profile.j2
+    dest: "/etc/ufw/applications.d/{{ loki_systemd_name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, config, firewall]
+
+- name: Reload UFW loki application profiles
+  ansible.builtin.command: "ufw app update {{ loki_systemd_name }}"
+  become: true
+  changed_when: false
+  failed_when: false
+  tags: [install, config, firewall]
+
+
+- name: Allow loki through UFW using application profile
+  ansible.builtin.ufw:
+    rule: allow
+    name: "Loki"
+    comment: "Allow Loki ({{ monitoring_loki.http_port }}/tcp|{{ monitoring_loki.grpc_port }}/tcp) from LOCAL NET"
+    src: "{{ item }}"
+  loop: "{{ networking_networks.local }}"
+  become: true
+  tags: [never, firewall]
+
+- name: Confirm loki UFW profile is allowed for local networks
+  ansible.builtin.command: "ufw status numbered"
+  register: loki_ufw_status
+  changed_when: false
+  tags: [never, firewall]
+
+- name: Assert Loki UFW rule exists for each local network
+  ansible.builtin.assert:
+    that:
+      - "'Loki' in loki_ufw_status.stdout and item in loki_ufw_status.stdout"
+    fail_msg: "Loki UFW rule is NOT present for {{ item }}"
+    success_msg: "Loki UFW rule is present for {{ item }}"
+  loop: "{{ networking_networks.local }}"
+  tags: [never, firewall]
+
+
+
+
+## 08. HEALTHCHECKS FOR LOKI
+# -------------------------------------------------------------------------------
+
+- name: Check Loki process is listening on port {{ monitoring_loki.http_port }}
+  ansible.builtin.shell: "ss -ltnp | grep ':{{ monitoring_loki.http_port }} '"
+  register: loki_port_check
+  changed_when: false
+  failed_when: loki_port_check.rc != 0
+  tags: [install, config, verify, healthcheck]
+
+- name: Assert Loki is listening on port {{ monitoring_loki.http_port }}
+  ansible.builtin.assert:
+    that:
+      - monitoring_loki.http_port|string in loki_port_check.stdout
+    fail_msg: "❌ Loki is NOT listening on port {{ monitoring_loki.http_port }}."
+    success_msg: "✅ Loki is listening on port {{ monitoring_loki.http_port }}."
+  tags: [install, config, verify, healthcheck]
+
+- name: Check Loki HTTP API /ready endpoint
+  ansible.builtin.uri:
+    url: "http://{{ monitoring_loki.listen_address }}:{{ monitoring_loki.http_port }}/ready"
+    method: GET
+    status_code: 200
+    return_content: true
+  register: loki_ready
+  failed_when: loki_ready.status != 200 or 'ready' not in loki_ready.content | lower
+  retries: 10
+  delay: 3
+  until: loki_ready.status == 200 and 'ready' in loki_ready.content | lower
+  tags: [install, config, verify, healthcheck]
+
+- name: Check Loki HTTP API /metrics endpoint
+  ansible.builtin.uri:
+    url: "http://{{ monitoring_loki.listen_address }}:{{ monitoring_loki.http_port }}/metrics"
+    method: GET
+    status_code: 200
+    return_content: false
+  register: loki_metrics
+  failed_when: loki_metrics.status != 200
+  tags: [install, config, verify, healthcheck]
+
+- name: Assert Loki /metrics endpoint is accessible
+  ansible.builtin.assert:
+    that:
+      - loki_metrics.status == 200
+    fail_msg: "❌ Loki /metrics endpoint is NOT accessible."
+    success_msg: "✅ Loki /metrics endpoint is accessible."
+  tags: [install, config, verify, healthcheck]
+
+
+
+## 09. UNINSTALL LOKI
+# -------------------------------------------------------------------------------
+
+
+- name: Confirm loki uninstallation
+  ansible.builtin.pause:
+    prompt: |
+      ⚠️  WARNING: Loki Uninstallation Confirmation ⚠️
+      
+      You are about to completely uninstall the Loki service from this system.
+      
+      This will remove:
+      🗑️  Service binary: /usr/local/bin/loki
+      🗑️  Systemd service: {{ loki_systemd_name }}.service
+      🗑️  Configuration files: {{ loki_config_dir }}/
+      🗑️  User account: {{ loki_user }}
+      🗑️  UFW firewall rules: Loki profile
+      
+      Are you sure you want to proceed with the uninstallation? (yes/no)
+  register: uninstall_confirmation
+  tags: [never, uninstall]
+
+- name: Abort uninstallation - user chose not to proceed
+  ansible.builtin.fail:
+    msg: |
+      🛑 Uninstallation ABORTED by user choice
+      
+      The Loki service remains installed and operational.
+      No changes have been made to the system.
+  when: not (uninstall_confirmation.user_input | bool)
+  tags: [never, uninstall]
+
+- name: Stop and disable loki service for uninstallation
+  ansible.builtin.systemd:
+    name: "{{ loki_systemd_name }}"
+    state: stopped
+    enabled: no
+  become: true
+  failed_when: false
+  tags: [never, uninstall]
+
+- name: Remove loki user during uninstallation
+  ansible.builtin.user:
+    name: "{{ loki_user }}"
+    state: absent
+    remove: true
+    force: true
+  become: true
+  failed_when: false
+  tags: [never, uninstall]
+
+- name: Remove Loki directories during uninstall
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ loki_config_dir }}"
+    - "{{ loki_data_dir }}"
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove Loki configuration files during uninstall
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ loki_config_file }}"
+    - "{{ monitoring_grafana.datasource_dir }}/{{ loki_user }}-source.yaml"
+  become: true
+  tags: [never, uninstall]
+
+- name: Delete systemd service for loki
+  ansible.builtin.file:
+    path: "/lib/systemd/system/{{ loki_systemd_name }}.service"
+    state: absent
+  become: true
+  tags: [never, uninstall]
+
+- name: Reload systemd after removing loki service
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove UFW rules for loki application profile
+  ansible.builtin.ufw:
+    rule: deny
+    name: "Loki"
+    delete: true
+  become: true
+  failed_when: false
+  tags: [never, uninstall]
+
+- name: Remove loki UFW application profile
+  ansible.builtin.file:
+    path: "/etc/ufw/applications.d/{{ loki_systemd_name }}"
+    state: absent
+  become: true
+  tags: [never, uninstall]

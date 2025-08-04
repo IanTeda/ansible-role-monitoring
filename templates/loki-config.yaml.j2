@@ -1,0 +1,60 @@
+# =============================================================================
+# Loki Configuration
+# =============================================================================
+# ⚠️ WARNING: This file is managed by Ansible - DO NOT EDIT MANUALLY!       ⚠️
+# Any manual changes will be overwritten on the next Ansible run.
+# Edit the template file or Ansible variables instead.
+#
+# Generated from: roles/monitoring/templates/loki-config.conf.j2
+# Last updated: {{ ansible_date_time.iso8601 }}
+#
+# Reference: 
+# - https://github.com/grafana/loki/blob/main/examples/getting-started/loki-config.yaml
+# - https://raw.githubusercontent.com/grafana/loki/main/cmd/loki/loki-local-config.yaml
+#
+#
+# Update 2025-07-21:
+# - Initial configuration to get started
+# =============================================================================
+
+---
+auth_enabled: false
+
+analytics:
+  reporting_enabled: false
+
+server:
+  http_listen_port: {{ loki_http_port }}
+  grpc_listen_port: {{ loki_grpc_port }}
+  log_level: {{ loki_log_level }}
+  grpc_server_max_concurrent_streams: 1000
+
+common:
+  instance_addr: {{ loki_listen_address }}
+  path_prefix: {{ loki_data_dir }}
+  storage:
+    filesystem:
+      chunks_directory: {{ loki_data_dir }}/chunks
+      rules_directory: {{ loki_data_dir }}/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+query_range:
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 100
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+

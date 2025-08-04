@@ -25,7 +25,7 @@ networking_networks:
 
 monitoring_group: 'monitoring'                      # Group for monitoring users
 
-# Grafana
+# Grafana configuration
 monitoring_grafana:
   user: 'grafana'                                   # System user for Grafana
   group: '{{ monitoring_group }}'                   # Group for Grafana user
@@ -49,3 +49,13 @@ monitoring_grafana:
     database: 'grafana'                             # PostgreSQL Grafana database name
     user: '{{ vault_grafana_admin_user }}'          # Grafana database user
     password: '{{ vault_grafana_admin_password }}'  # Grafana database password
+  
+# Loki Configuration
+monitoring_loki:
+  user: 'loki'                     # System user for Loki
+  group: '{{ monitoring_group }}'           # Group for Loki user
+  release: '3.4.5'                 # Latest stable version https://github.com/grafana/loki/releases
+  http_port: 3100                  # Loki web interface port
+  grpc_port: 9095                  # Loki gRPC port
+  listen_address: '127.0.0.1'       # IP address Loki listens on
+  log_level: 'warn'                # Set to info, debug, warn, error, or trace

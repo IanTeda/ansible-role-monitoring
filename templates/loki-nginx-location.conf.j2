@@ -1,0 +1,23 @@
+# ============================================================================
+# Nginx Location Block for Loki
+# ============================================================================
+# ⚠️ WARNING: This file is managed by Ansible - DO NOT EDIT MANUALLY!       ⚠️
+# Any manual changes will be overwritten on the next Ansible run.
+# Edit the template file or Ansible variables instead.
+#
+# Generated from: roles/monitoring/templates/loki-nginx-location.conf.j2
+# Last updated: {{ ansible_date_time.iso8601 }}
+# ============================================================================
+
+location /{{ monitoring_loki.path_prefix }}/ {
+    proxy_pass              http://127.0.0.1:{{ monitoring_loki.port }}/;
+    proxy_set_header        Host $host;
+    proxy_set_header        X-Real-IP $remote_addr;
+    proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header        X-Forwarded-Proto $scheme;
+    proxy_http_version      1.1;
+    proxy_set_header        Connection "";
+    client_max_body_size    10M;
+    proxy_read_timeout      90;
+    proxy_redirect          off;
+}
