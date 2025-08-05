@@ -1,14 +1,15 @@
 # ------------------------------------------------------------------------------
-# <Service> Role Default Variables
+# Monitoring Role Default Variables
 # ------------------------------------------------------------------------------
 #
-# Default configuration variables for the Ansible <service> role.
+# Default configuration variables for the Ansible Monitoring role.
 #
 # These variables can be overridden, with group, host or playbook specific variables
 # using the same name:
 #   - group_vars/
 #   - host_vars/
 #   - playbook vars
+#
 # Note: Ansible will override everything under the root database_ variable. Meaning
 # you need to include all variables when overriding, else there others will not
 # be found.
@@ -22,16 +23,6 @@ networking_networks:
     - '10.0.0.0/8'
 
 # ---------------------------- [ Monitoring ] ----------------------------------
-
-# Loki Configuration
-monitoring_loki:
-  user: 'loki'                              # System user for Loki
-  group: '{{ monitoring_group }}'           # Group for Loki user
-  release: '3.4.5'                          # Latest stable version https://github.com/grafana/loki/releases
-  http_port: 3100                           # Loki log ingestion, querying and API
-  grpc_port: 9095                           # Loki gRPC (binary) version of the http API 
-  listen_address: '127.0.0.1'               # IP address Loki listens on
-  log_level: 'warn'                         # Set to info, debug, warn, error, or trace
 
 # Grafana configuration
 monitoring_grafana:
@@ -59,6 +50,25 @@ monitoring_grafana:
     password: '{{ vault_grafana_admin_password }}'  # Grafana database password
 
 monitoring_group: 'monitoring'                      # Group for monitoring users
+
+# Loki Configuration
+monitoring_loki:
+  user: 'loki'                              # System user for Loki
+  group: '{{ monitoring_group }}'           # Group for Loki user
+  release: '3.4.5'                          # Latest stable version https://github.com/grafana/loki/releases
+  http_port: 3100                           # Loki log ingestion, querying and API
+  grpc_port: 9095                           # Loki gRPC (binary) version of the http API 
+  listen_address: '127.0.0.1'               # IP address Loki listens on
+  log_level: 'warn'                         # Set to info, debug, warn, error, or trace
+
+# Node Exporter
+monitoring_node_exporter:
+  user: 'node-exporter'                     # System user for Node Exporter
+  group: '{{ monitoring_group }}'           # Group for Node Exporter user
+  version: '1.9.1'                          # Latest stable version https://prometheus.io/download/
+  checksum: 'becb950ee80daa8ae7331d77966d94a611af79ad0d3307380907e0ec08f5b4e8'
+  listen_address: '127.0.0.1'
+  metrics_port: 9100                        # Metrics endpoint port   
 
 # Prometheus configuration
 monitoring_prometheus:

@@ -63,3 +63,11 @@
     enabled: true
     daemon_reload: true
   become: true
+
+- name: Prometheus Restart
+  ansible.builtin.systemd:
+    name: "{{ monitoring_prometheus.user }}"
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  become: true

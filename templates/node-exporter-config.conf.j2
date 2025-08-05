@@ -1,0 +1,32 @@
+# ==============================================================================
+# Prometheus Node Exporter Environment File
+# ------------------------------------------------------------------------------
+# This file contains the command-line arguments for the Node Exporter service.
+# It is sourced by the systemd unit file to keep the ExecStart line clean
+# and make the configuration easier to manage.
+#
+# Template: roles/monitoring/templates/node-exporter-config.conf.j2
+# Variables:
+#   - node_exporter_data_dir: The data directory for Node Exporter.
+#
+# Usage:
+#   - Managed by Ansible. Manual edits will be overwritten.
+#   - Update this template or Ansible variables to change configuration.
+#
+# Last updated: {{ ansible_date_time.iso8601 }}
+# ------------------------------------------------------------------------------
+
+NODE_EXPORTER_ARGS=" \
+  --path.procfs=/proc \
+  --path.sysfs=/sys \
+  --path.rootfs=/ \
+  --collector.filesystem.ignored-mount-points='^/(dev|proc|sys|var/lib/docker/.+)($|/)' \
+  --collector.filesystem.ignored-fs-types='^(autofs|binfmt_misc|cgroup|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|mqueue|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|sysfs|tracefs)$' \
+  --collector.textfile.directory={{ node_exporter_data_dir }}/textfile_collector \
+  --collector.systemd \
+  --collector.processes \
+  --collector.netdev \
+  --collector.netstat \
+  --no-collector.arp \
+  --log.level=info \
+  --log.format=logfmt"

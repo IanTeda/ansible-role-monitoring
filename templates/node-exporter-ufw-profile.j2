@@ -1,0 +1,44 @@
+# UFW APPLICATION PROFILE: NODE EXPORTER
+# ======================================
+#
+# This UFW (Uncomplicated Firewall) application profile defines the network
+# ports and protocols used by Prometheus Node Exporter for system metrics
+# collection. It enables secure firewall management for monitoring while
+# maintaining proper network isolation.
+#
+# Profile Configuration:
+#   - Service: Prometheus Node Exporter
+#   - Default Port: 9100/tcp (metrics endpoint)
+#   - Protocol: TCP only
+#   - Access: Local networks only (recommended)
+#
+# Usage Examples:
+#   sudo ufw allow Node-Exporter                    # Allow from anywhere (not recommended)
+#   sudo ufw allow from 192.168.1.0/24 to any app Node-Exporter  # Local network only
+#   sudo ufw allow from 10.0.0.0/8 to any app Node-Exporter      # Private networks
+#   sudo ufw deny Node-Exporter                     # Block all access
+#   sudo ufw delete allow Node-Exporter            # Remove rule
+#
+# Security Considerations:
+#   - Node Exporter metrics endpoint should be restricted to trusted networks
+#   - Consider using nginx reverse proxy instead of direct access
+#   - Monitor access logs for unauthorised connection attempts
+#   - Use VPN or SSH tunneling for remote administrative access
+#
+# Bitcoin Server Integration:
+#   - Works with Prometheus for comprehensive monitoring
+#   - Exposes system and hardware metrics for alerting and dashboards
+#   - Essential for maintaining Bitcoin server health
+#
+# References:
+#   - https://prometheus.io/docs/guides/node-exporter/
+#   - https://help.ubuntu.com/community/UFW
+#   - https://wiki.ubuntu.com/UncomplicatedFirewall
+#
+# Last updated: {{ ansible_date_time.date }}
+#==============================================================================
+
+[Node Exporter]
+title=Prometheus Node Exporter Metrics Endpoint
+description=Prometheus Node Exporter exposes system and hardware metrics for monitoring. This profile allows access to the Node Exporter metrics endpoint on port {{ monitoring_node_exporter.metrics_port }}/tcp. For Bitcoin server monitoring, restrict access to local networks only for security.
+ports={{ node_exporter_metrics_port }}/tcp

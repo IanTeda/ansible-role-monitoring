@@ -1,0 +1,31 @@
+# =============================================================================
+# Prometheus Scrape Configuration for Node Exporter
+# =============================================================================
+# WARNING: THIS FILE IS MANAGED BY ANSIBLE
+#
+# Any manual changes will be overwritten on the next playbook run.
+# Please edit the template file in the Ansible role instead.
+# Source: roles/debian/templates/node-exporter-prometheus.yml.j2
+# =============================================================================
+#
+# This configuration defines the scrape job for the local Node Exporter
+# instance. Node Exporter provides detailed system-level metrics, including
+# CPU, memory, disk, and network usage.
+#
+# This file is intended to be included in the main prometheus.yml via the
+# 'scrape_config_files' directive.
+#
+# Job Details:
+#   - job_name: 'node-exporter'
+#   - Scrape Target: localhost on the configured Node Exporter port
+#   - Instance Label: Set to the host's FQDN for clear identification
+#
+# Last updated: {{ ansible_date_time.date }}
+# -----------------------------------------------------------------------------
+
+scrape_configs:
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['{{ node_exporter_listen_address }}:{{ node_exporter_metrics_port }}']
+        labels:
+          instance: '{{ ansible_hostname }}'
