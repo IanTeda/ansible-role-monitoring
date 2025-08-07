@@ -53,12 +53,36 @@ loki.relabel "systemd_journal" {
     source_labels = ["__journal__hostname"]
     target_label = "instance" 
   }
+
+  // Relabel __journal__systemd_invocation_id to 'invocation_id'
+  rule {
+    source_labels = ["__journal__systemd_invocation_id"]
+    target_label = "invocation_id"
+  }
+
+  // Relabel __journal__pid to 'pid'
+  rule {
+    source_labels = ["__journal__pid"]
+    target_label = "pid"
+  }
+
+  // Relabel __journal__exe to 'executable'
+  rule {
+    source_labels = ["__journal__exe"]
+    target_label = "executable"
+  }
+
+  // Relabel __journal__uid to 'uid'
+  rule {
+    source_labels = ["__journal__uid"]
+    target_label = "uid"
+  }
 }
 
 // Read Alloy logs, add relabels and forward to loki endpoint
 // For maintainability add a seperate loki.source.journal component for each
 // service to be sent to Loki
-loki.source.journal "read_alloy_logs" {
+loki.source.journal "alloy" {
   // Include logs from Alloy systemd service unit
   matches = "_SYSTEMD_UNIT=alloy.service"
 
@@ -70,7 +94,7 @@ loki.source.journal "read_alloy_logs" {
 }
 
 // Read Node Exporter logs, and relabels and forward to loki endpoint
-loki.source.journal "read_node_exporter_logs" {
+loki.source.journal "node_exporter" {
   // Include logs from Node Exporter systemd service unit
   matches = "_SYSTEMD_UNIT=node-exporter.service"
 
@@ -82,7 +106,7 @@ loki.source.journal "read_node_exporter_logs" {
 }
 
 // Read Loki logs, and relabels and forward to loki endpoint
-loki.source.journal "read_loki_logs" {
+loki.source.journal "loki" {
   // Include logs from Loki systemd service unit
   matches = "_SYSTEMD_UNIT=loki.service"
 
@@ -94,7 +118,7 @@ loki.source.journal "read_loki_logs" {
 }
 
 // Read Prometheus logs, and relabels and forward to loki endpoint
-loki.source.journal "read_prometheus_logs" {
+loki.source.journal "prometheus" {
   // Include logs from Prometheus systemd service unit
   matches = "_SYSTEMD_UNIT=prometheus.service"
 
@@ -106,7 +130,7 @@ loki.source.journal "read_prometheus_logs" {
 }
 
 // Read Grafana logs, and relabels and forward to loki endpoint
-loki.source.journal "read_grafana_logs" {
+loki.source.journal "grafana" {
   // Include logs from Grafana systemd service unit
   matches = "_SYSTEMD_UNIT=grafana.service"
 

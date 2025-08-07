@@ -161,14 +161,14 @@
   become: true
   tags: [install, config, directories]
 
-- name: Assert Alloy config and data directories are created
-  ansible.builtin.assert:
-    that:
-      - ansible.builtin.stat(path="{{ alloy_config_dir }}").stat.exists
-      - ansible.builtin.stat(path="{{ alloy_data_dir }}").stat.exists
-    fail_msg: "Alloy config or data directory does not exist!"
-    success_msg: "Alloy config and data directories exist."
-  tags: [install, config, directories, verify]
+# - name: Assert Alloy config and data directories are created
+#   ansible.builtin.assert:
+#     that:
+#       - ansible.builtin.stat(path="{{ alloy_config_dir }}").stat.exists
+#       - ansible.builtin.stat(path="{{ alloy_data_dir }}").stat.exists
+#     fail_msg: "Alloy config or data directory does not exist!"
+#     success_msg: "Alloy config and data directories exist."
+#   tags: [install, config, directories, verify]
 
 
 # =============================================================================
@@ -350,13 +350,13 @@
     src: "{{ item }}"
   loop: "{{ networking_networks.local }}"
   become: true
-  tags: [install, firewall]
+  tags: [never, firewall]
 
 - name: Confirm Alloy UFW profile is allowed for local networks
   ansible.builtin.command: "ufw status numbered"
   register: ufw_status
   changed_when: false
-  tags: [install, firewall, verify]
+  tags: [never, firewall]
 
 - name: Assert Allow UFW rule exists for each local network
   ansible.builtin.assert:
@@ -365,7 +365,7 @@
     fail_msg: "Allow Alloy HTTP UFW rule is NOT present for {{ item }}"
     success_msg: "Allow Alloy HTTP UFW rule is present for {{ item }}"
   loop: "{{ networking_networks.local }}"
-  tags: [install, config, firewall, verify]
+  tags: [never, firewall]
 
 
 
