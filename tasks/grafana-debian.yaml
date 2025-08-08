@@ -163,14 +163,14 @@
     mode: "{{ item.mode }}"
   loop:
     - { path: "{{ grafana_config_dir }}", mode: "u=rwx,g=rw,o="}
-    - { path: "{{ monitoring_grafana.plugin_dir }}", mode: "u=rwx,g=rw,o="}
     - { path: "{{ grafana_data_dir }}", mode: "u=rwx,g=r,o="}
     - { path: "{{ monitoring_grafana.provisioning_dir }}", mode: "u=rwx,g=rw,o="}
-    - { path: "{{ monitoring_grafana.datasource_dir }}", mode: "u=rwx,g=rw,o="}
-    - { path: "{{ monitoring_grafana.dashboard_dir }}", mode: "u=rwx,g=rw,o="}
-    - { path: "{{ monitoring_grafana.alerting_dir }}", mode: "u=rwx,g=rw,o="}
-    - { path: "{{ monitoring_grafana.playlist_dir }}", mode: "u=rwx,g=rw,o="}
-    - { path: "{{ monitoring_grafana.folders_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.provisioning_dir }}/dashboards/", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.provisioning_dir }}/datasources/", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.provisioning_dir }}/folders/", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.provisioning_dir }}/notifiers/", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.provisioning_dir }}/playlists/", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ monitoring_grafana.provisioning_dir }}/plugins/", mode: "u=rwx,g=rw,o="}
   become: true
   tags:
     - install

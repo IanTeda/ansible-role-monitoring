@@ -196,7 +196,7 @@
 - name: Install Loki binaries
   ansible.builtin.copy:
     src: "/tmp/loki/loki-linux-amd64"
-    dest: "{{ loki_binary }}"
+    dest: "{{ loki_binary_path }}"
     owner: root
     group: root
     mode: 'u=rwx,g=rx,o=rx'
@@ -206,7 +206,7 @@
 
 - name: Verify Loki binary is installed and has correct permissions
   ansible.builtin.stat:
-    path: "{{ loki_binary }}"
+    path: "{{ loki_binary_path }}"
   register: loki_binary_stat
   tags: [install]
 

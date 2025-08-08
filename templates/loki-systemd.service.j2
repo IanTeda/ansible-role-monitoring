@@ -60,7 +60,7 @@ Requires=network.target
 WorkingDirectory={{ loki_data_dir }}
 
 # Start Loki with the specified config file
-ExecStart={{ loki_binary }} --config.file={{ loki_config_file }}
+ExecStart={{ loki_binary_path }} --config.file={{ loki_config_file }}
 
 # Process management
 Type=simple
